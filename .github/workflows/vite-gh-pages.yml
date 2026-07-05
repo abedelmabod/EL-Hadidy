@@ -16,12 +16,12 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -32,7 +32,8 @@ jobs:
         env:
           GITHUB_PAGES: "true"
       - name: Add SPA route fallback
-        run: cp dist/index.html dist/404.html
+        shell: pwsh
+        run: Copy-Item -LiteralPath dist/index.html -Destination dist/404.html -Force
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact
