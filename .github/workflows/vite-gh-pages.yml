@@ -28,7 +28,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Build Vite site
-        run: npm run build
+        shell: pwsh
+        run: |
+          npm run build 2>&1 | Tee-Object -FilePath vite-build.log
+          if ($LASTEXITCODE -ne 0) {
+            $details = (Get-Content -LiteralPath vite-build.log -Tail 25) -join "%0A"
+            Write-Output "::error title=Vite build failed::$details"
+            exit 1
+          }
         env:
           GITHUB_PAGES: "true"
       - name: Add SPA route fallback
