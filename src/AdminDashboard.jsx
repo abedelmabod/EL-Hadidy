@@ -48,6 +48,7 @@ const AdminDashboard = ({
   const [showCodes, setShowCodes] = useState(false);
   const [previewLesson, setPreviewLesson] = useState(null);
   const [selectedStudentId, setSelectedStudentId] = useState(null);
+  const [showResolvedSupportRequests, setShowResolvedSupportRequests] = useState(false);
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [aiMessages, setAiMessages] = useState([
@@ -918,7 +919,9 @@ const AdminDashboard = ({
       isActive: newLesson?.isActive !== false,
     });
   };
-  const pendingSupportRequests = supportRequests.filter((request) => (request.status || 'pending') === 'pending');
+  const resolvedSupportRequests = supportRequests.filter((request) => request.status === 'resolved');
+  const openSupportRequests = supportRequests.filter((request) => request.status !== 'resolved');
+  const pendingSupportRequests = openSupportRequests.filter((request) => (request.status || 'pending') === 'pending');
   const securityAlerts = logsDB.filter((log) => log.alertType === 'security' || log.action?.includes('حظر') || log.action?.includes('تصفير'));
   const lessonSubjectsForYear = subjects.filter((subject) => {
     const subjectChapters = chapters[subject.id] || [];
@@ -1411,7 +1414,7 @@ const AdminDashboard = ({
             </div>
 
             <div className="code-requests-grid">
-              {supportRequests.map((request) => (
+              {openSupportRequests.map((request) => (
                 <div key={request.id} className="request-card">
                   <div className="request-main">
                     <div className="request-avatar"><i className="fas fa-headset"></i></div>
@@ -1434,10 +1437,48 @@ const AdminDashboard = ({
                   </div>
                 </div>
               ))}
-              {supportRequests.length === 0 && (
-                <div className="empty-state">لا توجد طلبات دعم مرسلة من التطبيق حتى الآن.</div>
+              {openSupportRequests.length === 0 && (
+                <div className="empty-state">لا توجد طلبات دعم مفتوحة حاليًا.</div>
               )}
             </div>
+
+            <button
+              type="button"
+              className="resolved-requests-toggle"
+              onClick={() => setShowResolvedSupportRequests((current) => !current)}
+              aria-expanded={showResolvedSupportRequests}
+            >
+              <span><i className="fas fa-check-circle"></i> تم الحل</span>
+              <span>{resolvedSupportRequests.length} طلب <i className={`fas fa-chevron-${showResolvedSupportRequests ? 'up' : 'down'}`}></i></span>
+            </button>
+
+            {showResolvedSupportRequests && (
+              <div className="code-requests-grid resolved-requests-list">
+                {resolvedSupportRequests.map((request) => (
+                  <div key={request.id} className="request-card resolved-request-card">
+                    <div className="request-main">
+                      <div className="request-avatar"><i className="fas fa-check"></i></div>
+                      <div>
+                        <strong>{request.studentName || request.username || 'طالب'}</strong>
+                        <p>{request.typeLabel || request.type || 'طلب دعم'} • تم الحل</p>
+                        <p>{request.message || 'لا توجد رسالة إضافية.'}</p>
+                      </div>
+                    </div>
+                    <div className="request-meta">
+                      <span><i className="fas fa-phone"></i> {request.phone || 'بدون رقم'}</span>
+                      <span><i className="fas fa-clock"></i> {request.reviewedAt?.toDate?.().toLocaleString('ar-EG') || request.createdAt?.toDate?.().toLocaleString('ar-EG') || 'وقت غير متاح'}</span>
+                    </div>
+                    <div className="request-actions">
+                      <button onClick={() => openSupportRequestStudent(request)} className="btn-action btn-cyan">عرض الطالب</button>
+                      <button onClick={() => updateSupportRequestStatus(request, 'in_progress')} className="btn-action btn-orange">إعادة فتح الطلب</button>
+                    </div>
+                  </div>
+                ))}
+                {resolvedSupportRequests.length === 0 && (
+                  <div className="empty-state">لا توجد طلبات تم حلها حتى الآن.</div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -2362,6 +2403,12 @@ const AdminDashboard = ({
         .request-details span { display: flex; align-items: center; gap: 8px; }
         .request-details i { color: ${theme.accent}; width: 18px; }
         .request-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .resolved-requests-toggle { width: 100%; margin-top: 20px; padding: 15px 18px; border-radius: 16px; border: 1.5px solid ${theme.success}55; background: ${theme.success}12; color: ${theme.success}; display: flex; align-items: center; justify-content: space-between; gap: 12px; font: inherit; font-weight: 900; cursor: pointer; transition: 0.2s ease; }
+        .resolved-requests-toggle:hover { background: ${theme.success}1F; border-color: ${theme.success}; transform: translateY(-1px); }
+        .resolved-requests-toggle span { display: inline-flex; align-items: center; gap: 9px; }
+        .resolved-requests-list { margin-top: 14px; animation: fadeIn 0.22s ease; }
+        .resolved-request-card { border-color: ${theme.success}44; opacity: 0.92; }
+        .resolved-request-card .request-avatar { color: ${theme.success}; background: ${theme.success}14; border-color: ${theme.success}44; }
         .ops-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px; }
         .insights-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; margin-bottom: 18px; }
         .insight-card { background: ${theme.surface}; border: 1.5px solid ${visibleBorder}; border-radius: 18px; padding: 16px; box-shadow: ${isLightTheme ? '0 12px 28px rgba(15,23,42,0.06)' : '0 14px 30px rgba(0,0,0,0.10)'}; }
