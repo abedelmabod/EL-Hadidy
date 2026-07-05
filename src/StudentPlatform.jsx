@@ -247,7 +247,7 @@ const StudentPlatform = ({ user, setUser, lessons, announcement, theme, themeMod
       }}>
         {!isMobile && (
           <div style={{ padding: '30px 20px', textAlign: 'center' }}>
-            <img className="sidebar-logo" src="/logo.png" alt="El Hadidy" />
+            <img className="sidebar-logo" src={`${import.meta.env.BASE_URL}logo.png`} alt="El Hadidy" />
             <h4 style={{ color: theme.accent, margin: '15px 0 5px' }}>{studentDetails?.name}</h4>
             <p style={{ fontSize: '11px', color: theme.subText }}>{studentDetails?.year}</p>
             <div style={{ marginTop: '14px' }}>

@@ -347,7 +347,7 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexDirection: 'row-reverse' }}>
             <img
-              src="/logo.png"
+              src={`${import.meta.env.BASE_URL}logo.png`}
               alt="El Hadidy"
               style={{
                 width: '72px',

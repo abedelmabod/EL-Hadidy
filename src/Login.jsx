@@ -119,7 +119,7 @@ const Login = ({ setUser, theme, themeMode, toggleTheme }) => {
           <ThemeToggle mode={themeMode} onToggle={toggleTheme} theme={theme} />
         </div>
         <div className="logo-section">
-          <img className="brand-logo" src="/logo.png" alt="El Hadidy" />
+          <img className="brand-logo" src={`${import.meta.env.BASE_URL}logo.png`} alt="El Hadidy" />
           <h1>د. محمد الحديدي</h1>
           <p>{isRegistering ? 'إنشاء حساب طالب جديد' : 'منصة الحديدي التعليمية'}</p>
         </div>
@@ -171,11 +171,11 @@ const Login = ({ setUser, theme, themeMode, toggleTheme }) => {
           </form>
         )}
         <div className="legal-links">
-          <a href="/privacy">سياسة الخصوصية</a>
+          <a href={`${import.meta.env.BASE_URL}privacy`}>سياسة الخصوصية</a>
           <span>•</span>
-          <a href="/terms">الشروط والأحكام</a>
+          <a href={`${import.meta.env.BASE_URL}terms`}>الشروط والأحكام</a>
           <span>•</span>
-          <a href="/delete-account">حذف الحساب</a>
+          <a href={`${import.meta.env.BASE_URL}delete-account`}>حذف الحساب</a>
         </div>
       </div>
 

@@ -82,9 +82,11 @@ function App() {
     setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'));
   };
 
-  if (window.location.pathname === '/privacy' || window.location.pathname === '/privacy-policy') return <PrivacyPolicy />;
-  if (window.location.pathname === '/terms') return <TermsPage />;
-  if (window.location.pathname === '/delete-account' || window.location.pathname === '/account-deletion') return <DeleteAccountPage />;
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+  const currentPath = window.location.pathname.replace(basePath, '') || '/';
+  if (currentPath === '/privacy' || currentPath === '/privacy-policy') return <PrivacyPolicy />;
+  if (currentPath === '/terms') return <TermsPage />;
+  if (currentPath === '/delete-account' || currentPath === '/account-deletion') return <DeleteAccountPage />;
 
   if (!user) return <Login setUser={setUser} theme={theme} themeMode={themeMode} toggleTheme={toggleTheme} />;
 

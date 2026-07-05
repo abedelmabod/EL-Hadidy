@@ -706,6 +706,9 @@ const AdminDashboard = ({
     const normalizedCodes = codes
       .map((item) => String(item?.code || item || "").trim())
       .filter(Boolean);
+    if (normalizedCodes.length === 0) {
+      return Swal.fire("تنبيه", "لا توجد أكواد صالحة للتصدير", "info");
+    }
     const rows = [];
     for (let index = 0; index < normalizedCodes.length; index += 3) {
       rows.push(normalizedCodes.slice(index, index + 3));
@@ -735,13 +738,14 @@ const AdminDashboard = ({
       </div>
     `;
     Object.assign(wrapper.style, {
-      position: "fixed",
-      left: "-10000px",
+      position: "absolute",
+      left: "0",
       top: "0",
       width: "794px",
       background: "#ffffff",
       color: "#000000",
-      zIndex: "-1",
+      zIndex: "2147483647",
+      pointerEvents: "none",
     });
     const style = document.createElement("style");
     style.textContent = `
@@ -790,17 +794,29 @@ const AdminDashboard = ({
     try {
       document.body.appendChild(style);
       document.body.appendChild(wrapper);
+      if (document.fonts?.ready) await document.fonts.ready;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      const pdfPage = wrapper.querySelector(".codes-pdf-page");
+      if (!pdfPage) throw new Error("تعذر تجهيز صفحة الأكواد للتصدير");
+
       const html2pdf = (await import("html2pdf.js")).default;
       await html2pdf()
         .set({
           margin: 0,
           filename: fileName,
           image: { type: "jpeg", quality: 0.98 },
-          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: "#ffffff",
+            scrollX: 0,
+            scrollY: 0,
+            logging: false,
+          },
           jsPDF: { unit: "px", format: [794, 1123], orientation: "portrait" },
-          pagebreak: { mode: ["avoid-all"] },
         })
-        .from(wrapper)
+        .from(pdfPage)
         .save();
       Swal.fire({ icon: "success", title: "تم تحميل ملف PDF", text: fileName, background: theme.surface, color: theme.text });
     } catch (error) {
@@ -1227,7 +1243,7 @@ const AdminDashboard = ({
                 </button>
                 <div className="brand-main">
                   <div className="brand-logo-frame">
-                    <img className="admin-logo" src="/logo.png" alt="El Hadidy" />
+                    <img className="admin-logo" src={`${import.meta.env.BASE_URL}logo.png`} alt="El Hadidy" />
                   </div>
                   {!isSidebarCollapsed && (
                     <div className="brand-copy">
