@@ -124,12 +124,6 @@ const Login = ({ setUser, theme, themeMode, toggleTheme }) => {
           <p>{isRegistering ? 'إنشاء حساب طالب جديد' : 'منصة الحديدي التعليمية'}</p>
         </div>
 
-        <a className="developer-page-link" href={`${import.meta.env.BASE_URL}developer`}>
-          <i className="fas fa-laptop-code"></i>
-          <span>تعرف على مطوّر المنصة</span>
-          <i className="fas fa-arrow-left"></i>
-        </a>
-
         {!isRegistering ? (
           <form onSubmit={handleLogin}>
             <div className="input-group">
@@ -191,10 +185,6 @@ const Login = ({ setUser, theme, themeMode, toggleTheme }) => {
         .login-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: ${theme.bg}; font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; transition: 0.3s; }
         .login-card { background: ${theme.surface}; padding: 42px; border-radius: 25px; width: 100%; max-width: 460px; border: 1px solid ${theme.border}; box-shadow: 0 10px 40px rgba(0,0,0,0.18); text-align: center; }
         .brand-logo { width: 148px; height: 148px; object-fit: cover; border-radius: 36px; margin-bottom: 20px; border: 1px solid ${theme.border}; box-shadow: 0 18px 45px rgba(0,0,0,0.30); }
-        .developer-page-link { width: 100%; min-height: 48px; margin: -10px 0 20px; padding: 10px 14px; display: grid; grid-template-columns: 28px 1fr 20px; align-items: center; gap: 8px; color: ${theme.accent}; background: ${theme.accent}12; border: 1px solid ${theme.accent}44; border-radius: 10px; text-decoration: none; font-size: 13px; font-weight: 900; transition: 0.2s ease; }
-        .developer-page-link:hover { background: ${theme.accent}1F; border-color: ${theme.accent}; transform: translateY(-1px); }
-        .developer-page-link i:first-child { font-size: 18px; }
-        .developer-page-link i:last-child { font-size: 12px; }
         h1 { 
         color: ${theme.text}; font-size: 30px; margin-bottom: 5px; font-weight: 900; }
         p { color: ${theme.subText}; font-size: 14px; margin-bottom: 30px; }
