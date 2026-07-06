@@ -9,6 +9,7 @@ import { subscribeToLiveCollection } from './services/firestore-service';
 import SupportAdmin from './SupportAdmin';
 import { resolveWebTheme, THEME_STORAGE_KEY } from './theme/theme-config';
 import { DeleteAccountPage, PrivacyPolicy, TermsPage } from './LegalPages';
+import DeveloperPage from './DeveloperPage';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -87,6 +88,7 @@ function App() {
   if (currentPath === '/privacy' || currentPath === '/privacy-policy') return <PrivacyPolicy />;
   if (currentPath === '/terms') return <TermsPage />;
   if (currentPath === '/delete-account' || currentPath === '/account-deletion') return <DeleteAccountPage />;
+  if (currentPath === '/developer' || currentPath === '/about-developer') return <DeveloperPage />;
 
   if (!user) return <Login setUser={setUser} theme={theme} themeMode={themeMode} toggleTheme={toggleTheme} />;
 

@@ -176,6 +176,8 @@ const Login = ({ setUser, theme, themeMode, toggleTheme }) => {
           <a href={`${import.meta.env.BASE_URL}terms`}>الشروط والأحكام</a>
           <span>•</span>
           <a href={`${import.meta.env.BASE_URL}delete-account`}>حذف الحساب</a>
+          <span>•</span>
+          <a href={`${import.meta.env.BASE_URL}developer`}>عن المطوّر</a>
         </div>
       </div>
 
