@@ -8,8 +8,6 @@ const contributions = [
   { icon: 'fa-circle-play', title: 'تشغيل المحتوى التعليمي', text: 'تجهيز تكامل Bunny Stream لعرض الفيديوهات والملفات بطريقة مستقرة.' },
 ];
 
-const technologies = ['React', 'React Native', 'Expo', 'Firebase', 'Bunny Stream', 'Vite'];
-
 export default function DeveloperPage() {
   const theme = resolveWebTheme(localStorage.getItem(THEME_STORAGE_KEY) || 'dark');
   const baseUrl = import.meta.env.BASE_URL;
@@ -71,16 +69,6 @@ export default function DeveloperPage() {
           ))}
         </div>
 
-        <div className="technology-panel">
-          <div>
-            <span className="eyebrow">التقنيات المستخدمة</span>
-            <h2>بنية حديثة وسهلة التطوير</h2>
-          </div>
-          <div className="technology-list">
-            {technologies.map((technology) => <span key={technology}>{technology}</span>)}
-          </div>
-        </div>
-
         <div className="credit-line">
           <i className="fas fa-code"></i>
           <p>تمت البرمجة والتجهيز بعناية لخدمة طلاب منصة د. محمد الحديدي.</p>
@@ -102,7 +90,7 @@ export default function DeveloperPage() {
         .contact-number { width: fit-content; margin: 18px auto 0; display: flex; align-items: center; gap: 9px; color: ${theme.accent}; background: ${theme.accent}12; border: 1px solid ${theme.accent}44; border-radius: 8px; padding: 10px 15px; text-decoration: none; font-weight: 900; letter-spacing: 0; }
         .contact-number:hover { border-color: ${theme.accent}; background: ${theme.accent}1F; }
         .role-badges { display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; margin-top: 24px; }
-        .role-badges span, .technology-list span { border: 1px solid ${theme.accent}44; background: ${theme.accent}12; color: ${theme.accent}; border-radius: 999px; padding: 8px 13px; font-weight: 800; font-size: 12px; }
+        .role-badges span { border: 1px solid ${theme.accent}44; background: ${theme.accent}12; color: ${theme.accent}; border-radius: 999px; padding: 8px 13px; font-weight: 800; font-size: 12px; }
         .developer-content { width: min(1080px, 100%); margin: 46px auto 0; }
         .profile-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
         .profile-details > div { min-width: 0; padding: 18px; background: ${theme.surface}; border: 1px solid ${theme.borderSoft}; border-radius: 8px; display: grid; gap: 5px; }
@@ -124,8 +112,6 @@ export default function DeveloperPage() {
         .card-icon { width: 48px; height: 48px; flex: 0 0 48px; display: grid; place-items: center; border-radius: 8px; color: ${theme.accent}; background: ${theme.accent}14; font-size: 20px; }
         .contribution-card h3 { margin: 0 0 7px; font-size: 17px; }
         .contribution-card p { margin: 0; color: ${theme.subText}; line-height: 1.8; font-size: 13px; }
-        .technology-panel { margin-top: 18px; padding: 24px; background: ${theme.surface}; border: 1px solid ${theme.borderSoft}; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 22px; }
-        .technology-list { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 470px; direction: ltr; }
         .credit-line { margin: 28px 0 8px; padding: 20px; border-top: 1px solid ${theme.borderSoft}; display: flex; justify-content: center; align-items: center; gap: 10px; color: ${theme.subText}; text-align: center; }
         .credit-line i { color: ${theme.accent}; }
         .credit-line p { margin: 0; }
@@ -134,8 +120,6 @@ export default function DeveloperPage() {
           .developer-hero { padding: 42px 18px; }
           .profile-details { grid-template-columns: 1fr; }
           .contribution-grid { grid-template-columns: 1fr; }
-          .technology-panel { align-items: flex-start; flex-direction: column; }
-          .technology-list { justify-content: flex-start; }
         }
       `}</style>
     </main>
