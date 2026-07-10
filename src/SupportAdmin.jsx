@@ -192,14 +192,18 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
   };
 
   const resetDevice = async (student) => {
-    await confirmAction('تصفير جهاز الطالب؟', 'سيتم السماح للطالب بتسجيل الدخول من جهاز جديد.', async () => {
+    await confirmAction('تصفير أجهزة الطالب؟', 'سيتم السماح للطالب بتسجيل الدخول من أجهزة جديدة حسب الحد المسموح.', async () => {
       await updateDoc(doc(db, 'students', student.id), {
         deviceId: null,
+        deviceIds: [],
+        deviceCount: 0,
         deviceType: null,
         deviceInfo: null,
+        lastDeviceId: '',
+        lastDeviceLinkedAt: null,
       });
-      await logSupportAction(student, 'تصفير جهاز الطالب من لوحة الدعم');
-      showToast('تم تصفير الجهاز');
+      await logSupportAction(student, 'تصفير أجهزة الطالب من لوحة الدعم');
+      showToast('تم تصفير الأجهزة');
     });
   };
 
@@ -598,6 +602,7 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
                     ['الاشتراك', selectedStudent.isSubscribed ? 'مشترك' : 'غير مشترك'],
                     ['الكود', selectedStudent.usedCode || 'لا يوجد'],
                     ['الجهاز', selectedStudent.deviceType || 'غير مسجل'],
+                    ['عدد الأجهزة', `${(Array.isArray(selectedStudent.deviceIds) ? selectedStudent.deviceIds.length : (selectedStudent.deviceId ? 1 : 0))}/${selectedStudent.maxDevices || 1}`],
                     ['الحالة', selectedStudent.isBanned ? 'محظور' : 'نشط'],
                     ['آخر تحديث دعم', formatDate(selectedStudent.supportUpdatedAt)],
                   ].map(([label, value]) => (
@@ -659,7 +664,7 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
                 <div style={{ display: 'grid', gap: '10px' }}>
                   <div style={{ color: theme.accent, fontWeight: '900' }}>إجراءات الحساب</div>
                   <button onClick={() => resetDevice(selectedStudent)} style={outlineButton(theme.info)}>
-                    <i className="fas fa-sync-alt"></i> تصفير الجهاز
+                    <i className="fas fa-sync-alt"></i> تصفير الأجهزة
                   </button>
                   <button onClick={() => toggleBan(selectedStudent)} style={outlineButton(selectedStudent.isBanned ? theme.success : theme.danger)}>
                     <i className={`fas ${selectedStudent.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i>

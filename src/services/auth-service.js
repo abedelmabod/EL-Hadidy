@@ -180,9 +180,24 @@ function mapFirebaseAuthError(error) {
   );
 }
 
+const getAllowedDeviceCount = (studentData = {}) => {
+  const parsed = Number(studentData.maxDevices ?? studentData.deviceLimit ?? 1);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.min(10, Math.floor(parsed)));
+};
+
+const getRegisteredDeviceIds = (studentData = {}) => {
+  const ids = Array.isArray(studentData.deviceIds) ? studentData.deviceIds : [];
+  const legacyId = studentData.deviceId ? [studentData.deviceId] : [];
+  return Array.from(new Set([...ids, ...legacyId].map((id) => String(id || "").trim()).filter(Boolean)));
+};
+
 async function ensureStudentAccess(db, profile, device = {}) {
   const studentRef = doc(db, "students", profile.id);
   const studentData = profile.data;
+  const deviceId = String(device.id || "").trim();
+  const maxDevices = getAllowedDeviceCount(studentData);
+  const registeredDeviceIds = getRegisteredDeviceIds(studentData);
 
   if (studentData.isBanned) {
     throw new SharedAuthError(
@@ -193,9 +208,9 @@ async function ensureStudentAccess(db, profile, device = {}) {
   }
 
   if (
-    studentData.deviceId &&
-    device.id &&
-    String(studentData.deviceId) !== String(device.id)
+    deviceId &&
+    registeredDeviceIds.length >= maxDevices &&
+    !registeredDeviceIds.includes(deviceId)
   ) {
     throw new SharedAuthError("DEVICE_MISMATCH", "هذا الحساب مرتبط بجهاز آخر.", {
       profile,
@@ -203,11 +218,17 @@ async function ensureStudentAccess(db, profile, device = {}) {
     });
   }
 
-  if (!studentData.deviceId && device.id) {
+  if (deviceId && !registeredDeviceIds.includes(deviceId)) {
+    const nextDeviceIds = [...registeredDeviceIds, deviceId];
     const devicePatch = {
-      deviceId: device.id,
+      deviceId: studentData.deviceId || nextDeviceIds[0],
+      deviceIds: nextDeviceIds,
+      deviceCount: nextDeviceIds.length,
+      maxDevices,
       deviceType: device.type || null,
       deviceInfo: device.info || null,
+      lastDeviceId: deviceId,
+      lastDeviceLinkedAt: serverTimestamp(),
     };
 
     await updateDoc(studentRef, devicePatch);
@@ -218,7 +239,12 @@ async function ensureStudentAccess(db, profile, device = {}) {
     };
   }
 
-  return studentData;
+  return {
+    ...studentData,
+    maxDevices,
+    deviceIds: registeredDeviceIds,
+    deviceCount: registeredDeviceIds.length,
+  };
 }
 
 export async function signInWithSharedCredentials(services, payload) {
@@ -372,7 +398,10 @@ export async function registerStudentWithCode(services, payload) {
     codeYear: codeValue ? accessYear : "",
     pendingCode: "",
     codeReviewStatus: codeValue ? "approved" : "",
+    maxDevices: 1,
     deviceId: device.id || null,
+    deviceIds: device.id ? [device.id] : [],
+    deviceCount: device.id ? 1 : 0,
     deviceType: device.type || null,
     deviceInfo: device.info || null,
     createdAt: serverTimestamp(),

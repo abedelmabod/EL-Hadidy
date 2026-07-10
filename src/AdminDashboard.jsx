@@ -338,6 +338,67 @@ const AdminDashboard = ({
     }
   };
 
+  const getStudentDeviceIds = (student = {}) => {
+    const ids = Array.isArray(student.deviceIds) ? student.deviceIds : [];
+    const legacyId = student.deviceId ? [student.deviceId] : [];
+    return Array.from(new Set([...ids, ...legacyId].map((id) => String(id || "").trim()).filter(Boolean)));
+  };
+
+  const getStudentMaxDevices = (student = {}) => {
+    const parsed = Number(student.maxDevices ?? student.deviceLimit ?? 1);
+    if (!Number.isFinite(parsed)) return 1;
+    return Math.max(1, Math.min(10, Math.floor(parsed)));
+  };
+
+  const resetStudentDevicesPatch = {
+    deviceId: null,
+    deviceIds: [],
+    deviceCount: 0,
+    deviceType: null,
+    deviceInfo: null,
+    lastDeviceId: "",
+    lastDeviceLinkedAt: null,
+  };
+
+  const updateStudentDeviceLimit = async (student) => {
+    const currentLimit = getStudentMaxDevices(student);
+    const currentCount = getStudentDeviceIds(student).length;
+    const result = await Swal.fire({
+      title: 'عدد الأجهزة المسموح بها',
+      html: `<div style="direction:rtl;text-align:right;line-height:1.9">الحساب مسجل حالياً على <b>${currentCount}</b> جهاز.<br/>اختر عدد الأجهزة المسموح لها بالدخول لهذا الطالب.</div>`,
+      input: 'number',
+      inputValue: currentLimit,
+      inputAttributes: { min: 1, max: 10, step: 1 },
+      showCancelButton: true,
+      confirmButtonText: 'حفظ',
+      cancelButtonText: 'إلغاء',
+      background: theme.surface,
+      color: theme.text,
+      confirmButtonColor: theme.accent,
+      cancelButtonColor: theme.muted,
+      preConfirm: (value) => {
+        const nextValue = Number(value);
+        if (!Number.isFinite(nextValue) || nextValue < 1 || nextValue > 10) {
+          Swal.showValidationMessage('اكتب رقم من 1 إلى 10');
+          return false;
+        }
+        if (currentCount > nextValue) {
+          Swal.showValidationMessage(`هذا الطالب مسجل على ${currentCount} جهاز. صفّر الأجهزة أولاً أو اختر رقم أكبر.`);
+          return false;
+        }
+        return Math.floor(nextValue);
+      },
+    });
+
+    if (!result.isConfirmed) return;
+
+    await updateDoc(doc(db, "students", student.id), {
+      maxDevices: result.value,
+      deviceLimit: result.value,
+    });
+    Swal.fire({ icon: 'success', title: 'تم تحديث عدد الأجهزة', background: theme.surface, color: theme.text, timer: 1500, showConfirmButton: false });
+  };
+
   const uploadVideoToBunnyStream = async (file) => {
     if (!file?.type?.startsWith('video/')) {
       throw new Error('اختر ملف فيديو صالح.');
@@ -1971,6 +2032,7 @@ const AdminDashboard = ({
                 { label: 'الرقم', value: (s) => s.phone || 'غير متوفر' },
                 { label: 'الفرقة', value: (s) => s.year || s.codeYear || '' },
                 { label: 'الاشتراك', value: (s) => s.isSubscribed ? 'مفعل' : 'غير مفعل' },
+                { label: 'الأجهزة', value: (s) => `${getStudentDeviceIds(s).length}/${getStudentMaxDevices(s)}` },
                 { label: 'الحالة', value: (s) => s.isBanned ? 'محظور' : 'مفعل' },
                 { label: 'الكود المستخدم', value: (s) => s.usedCode || '' },
               ])} className="btn-secondary"><i className="fas fa-file-pdf"></i> تصدير PDF</button>
@@ -1993,6 +2055,9 @@ const AdminDashboard = ({
                         <div style={{ fontSize: '18px' }}>
                           {getDeviceIcon(s.deviceType)} 
                           <div style={{fontSize: '9px', color: theme.muted, marginTop: '4px'}}>{s.deviceType || 'غير متوفر'}</div>
+                          <div style={{fontSize: '10px', color: theme.accent, marginTop: '3px', fontWeight: 900}}>
+                            {getStudentDeviceIds(s).length}/{getStudentMaxDevices(s)}
+                          </div>
                         </div>
                       </td>
                       <td>{s.year}</td>
@@ -2000,7 +2065,8 @@ const AdminDashboard = ({
                       <td>
                         <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
                           <button title="فتح البروفايل" onClick={() => setSelectedStudentId(s.id)} className="btn-action btn-green"><i className="fas fa-id-card"></i></button>
-                          <button title="تصفير الجهاز" onClick={() => confirmAction('تصفير الجهاز؟', '', () => updateDoc(doc(db, "students", s.id), { deviceId: null, deviceType: null }))} className="btn-action btn-cyan"><i className="fas fa-sync-alt"></i></button>
+                          <button title="عدد الأجهزة" onClick={() => updateStudentDeviceLimit(s)} className="btn-action btn-blue"><i className="fas fa-mobile-alt"></i></button>
+                          <button title="تصفير الأجهزة" onClick={() => confirmAction('تصفير الأجهزة؟', 'سيتم حذف كل الأجهزة المسجلة لهذا الطالب.', () => updateDoc(doc(db, "students", s.id), resetStudentDevicesPatch))} className="btn-action btn-cyan"><i className="fas fa-sync-alt"></i></button>
                           <button title="حظر / فك حظر" onClick={() => updateDoc(doc(db, "students", s.id), { isBanned: !s.isBanned, banReason: !s.isBanned ? 'تم حظر الحساب بواسطة الإدارة' : '' })} className={`btn-action ${s.isBanned ? 'btn-green' : 'btn-orange'}`}><i className={`fas ${s.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i></button>
                           <button title="حذف" onClick={() => confirmAction('حذف نهائي؟', '', () => deleteDoc(doc(db, "students", s.id)), true)} className="btn-action btn-red"><i className="fas fa-trash"></i></button>
                         </div>
@@ -2207,7 +2273,7 @@ const AdminDashboard = ({
                 <div><strong>{selectedStudentProfile.year || 'غير محدد'}</strong><span>فرقة التسجيل</span></div>
                 <div><strong>{selectedStudentProfile.codeYear || selectedStudentProfile.accessYear || 'غير مفعل'}</strong><span>فرقة الوصول</span></div>
                 <div><strong>{selectedStudentProfile.isSubscribed ? 'مفعل' : 'غير مفعل'}</strong><span>الاشتراك</span></div>
-                <div><strong>{selectedStudentLessons.length}</strong><span>محاضرات متاحة</span></div>
+                <div><strong>{getStudentDeviceIds(selectedStudentProfile).length}/{getStudentMaxDevices(selectedStudentProfile)}</strong><span>الأجهزة</span></div>
               </div>
 
               <div className="profile-sections">
@@ -2225,13 +2291,16 @@ const AdminDashboard = ({
                   <div className="profile-info-list">
                     <span><strong>النوع:</strong> {selectedStudentProfile.deviceType || 'غير معروف'}</span>
                     <span><strong>Device ID:</strong> {selectedStudentProfile.deviceId ? 'مسجل' : 'غير مسجل'}</span>
+                    <span><strong>الأجهزة المسجلة:</strong> {getStudentDeviceIds(selectedStudentProfile).length} من {getStudentMaxDevices(selectedStudentProfile)}</span>
+                    <span><strong>محاضرات متاحة:</strong> {selectedStudentLessons.length}</span>
                     <span><strong>ملاحظات:</strong> {selectedStudentProfile.banReason || selectedStudentProfile.deviceInfo || 'لا توجد'}</span>
                   </div>
                 </section>
               </div>
 
               <div className="profile-actions">
-                <button className="btn-action btn-cyan" onClick={() => confirmAction('تصفير الجهاز؟', '', () => updateDoc(doc(db, "students", selectedStudentProfile.id), { deviceId: null, deviceType: null }))}><i className="fas fa-sync-alt"></i> تصفير الجهاز</button>
+                <button className="btn-action btn-blue" onClick={() => updateStudentDeviceLimit(selectedStudentProfile)}><i className="fas fa-mobile-alt"></i> عدد الأجهزة</button>
+                <button className="btn-action btn-cyan" onClick={() => confirmAction('تصفير الأجهزة؟', 'سيتم حذف كل الأجهزة المسجلة لهذا الطالب.', () => updateDoc(doc(db, "students", selectedStudentProfile.id), resetStudentDevicesPatch))}><i className="fas fa-sync-alt"></i> تصفير الأجهزة</button>
                 <button className={`btn-action ${selectedStudentProfile.isBanned ? 'btn-green' : 'btn-orange'}`} onClick={() => updateDoc(doc(db, "students", selectedStudentProfile.id), { isBanned: !selectedStudentProfile.isBanned, banReason: !selectedStudentProfile.isBanned ? 'تم حظر الحساب بواسطة الإدارة' : '' })}><i className={`fas ${selectedStudentProfile.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i> {selectedStudentProfile.isBanned ? 'فك الحظر' : 'حظر الطالب'}</button>
                 <button className="btn-action btn-red" onClick={() => confirmAction('حذف الطالب نهائياً؟', '', async () => { await deleteDoc(doc(db, "students", selectedStudentProfile.id)); setSelectedStudentId(null); }, true)}><i className="fas fa-trash"></i> حذف</button>
               </div>
@@ -2513,6 +2582,7 @@ const AdminDashboard = ({
         .table-container tbody tr { transition: 0.16s ease; }
         .table-container tbody tr:hover { background: ${theme.surfaceAlt} !important; }
         .btn-action { border: 1px solid transparent; padding: 9px 11px; border-radius: 10px; cursor: pointer; transition: 0.2s; font-family: 'Cairo'; font-weight: 900; }
+        .btn-blue { background: ${theme.accent}22; color: ${theme.accent}; }
         .btn-cyan { background: ${theme.info}22; color: ${theme.info}; }
         .btn-orange { background: ${theme.accentAlt}22; color: ${theme.accentAlt}; }
         .btn-green { background: ${theme.success}22; color: ${theme.success}; }

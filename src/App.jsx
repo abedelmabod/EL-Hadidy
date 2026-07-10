@@ -40,7 +40,11 @@ function App() {
           const data = snapshot.data();
           const currentDeviceId = navigator.userAgent + "_" + navigator.platform;
 
-          if (data.deviceId && data.deviceId !== currentDeviceId) {
+          const registeredDeviceIds = Array.isArray(data.deviceIds)
+            ? data.deviceIds
+            : (data.deviceId ? [data.deviceId] : []);
+
+          if (registeredDeviceIds.length && !registeredDeviceIds.includes(currentDeviceId)) {
             Swal.fire({
               title: 'تنبيه أمني', text: 'تم فتح الحساب من جهاز آخر، سيتم تسجيل الخروج.', icon: 'warning', background: theme.surface, color: theme.text, confirmButtonColor: theme.accent
             }).then(() => setUser(null));
