@@ -209,30 +209,127 @@ const AdminDashboard = ({
     });
   };
 
-  // --- دالة محاكاة إرسال الإشعارات (Push Notifications FCM) ---
-  const sendPushNotification = async (title, body) => {
-    if (window?.Notification && Notification.permission === 'granted') {
-      new Notification(title, { body });
-      return;
+  const isExpoPushToken = (token) => /^ExponentPushToken\[[\w-]+\]$|^ExpoPushToken\[[\w-]+\]$/.test(String(token || '').trim());
+
+  const chunkArray = (items, size = 100) => {
+    const chunks = [];
+    for (let index = 0; index < items.length; index += size) {
+      chunks.push(items.slice(index, index + size));
     }
-    if (window?.Notification && Notification.permission !== 'denied') {
-      const permission = await Notification.requestPermission().catch(() => 'default');
-      if (permission === 'granted') {
-        new Notification(title, { body });
-        return;
-      }
-    }
-    Swal.fire({
-      toast: true,
-      position: 'top-end',
-      icon: 'info',
-      title,
-      text: body,
-      timer: 2600,
-      showConfirmButton: false,
-      background: theme.surface,
-      color: theme.text,
+    return chunks;
+  };
+
+  const collectStudentPushTokens = async (targetYear) => {
+    const normalizedYear = String(targetYear || '').trim();
+    if (!normalizedYear) return [];
+
+    const snapshots = await Promise.all([
+      getDocs(query(collection(db, 'students'), where('year', '==', normalizedYear))).catch(() => null),
+      getDocs(query(collection(db, 'students'), where('accessYears', 'array-contains', normalizedYear))).catch(() => null),
+    ]);
+
+    const studentsById = new Map();
+    snapshots.forEach((snapshot) => {
+      snapshot?.docs?.forEach((studentDoc) => {
+        studentsById.set(studentDoc.id, { id: studentDoc.id, ...studentDoc.data() });
+      });
     });
+
+    return Array.from(studentsById.values()).flatMap((student) => {
+      if (student.isBanned || student.notificationPermissionStatus === 'denied') return [];
+      const tokens = [
+        student.expoPushToken,
+        ...(Array.isArray(student.expoPushTokens) ? student.expoPushTokens : []),
+      ];
+      return tokens
+        .map((token) => String(token || '').trim())
+        .filter(isExpoPushToken);
+    });
+  };
+
+  const sendPushNotification = async ({ title, body, year, lessonId, lessonTitle }) => {
+    try {
+      const tokens = Array.from(new Set(await collectStudentPushTokens(year)));
+
+      if (!tokens.length) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'info',
+          title: 'لم يتم إرسال إشعار',
+          text: 'لا توجد أجهزة مفعلة للإشعارات لهذه الفرقة حتى الآن.',
+          timer: 3000,
+          showConfirmButton: false,
+          background: theme.surface,
+          color: theme.text,
+        });
+        return { sent: 0, failed: 0 };
+      }
+
+      const messages = tokens.map((token) => ({
+        to: token,
+        sound: 'default',
+        title,
+        body,
+        priority: 'high',
+        data: {
+          type: 'new_lesson',
+          lessonId: lessonId || '',
+          lessonTitle: lessonTitle || '',
+          year: year || '',
+        },
+      }));
+
+      const responses = await Promise.all(chunkArray(messages).map(async (chunk) => {
+        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Accept-Encoding': 'gzip, deflate',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(chunk),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Expo Push API failed with status ${response.status}`);
+        }
+
+        return response.json();
+      }));
+
+      const tickets = responses.flatMap((response) => Array.isArray(response?.data) ? response.data : []);
+      const failed = tickets.filter((ticket) => ticket.status === 'error').length;
+      const sent = Math.max(0, messages.length - failed);
+
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: failed ? 'warning' : 'success',
+        title: failed ? 'تم إرسال بعض الإشعارات' : 'تم إرسال الإشعارات',
+        text: `تم الإرسال إلى ${sent} جهاز${failed ? `، وفشل ${failed}` : ''}.`,
+        timer: 3200,
+        showConfirmButton: false,
+        background: theme.surface,
+        color: theme.text,
+      });
+
+      return { sent, failed };
+    } catch (error) {
+      console.error('Push notification error:', error);
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'تعذر إرسال الإشعار',
+        text: 'تم حفظ المحاضرة، لكن فشل إرسال إشعار الطلاب.',
+        timer: 3500,
+        showConfirmButton: false,
+        background: theme.surface,
+        color: theme.text,
+      });
+      return { sent: 0, failed: 0, error };
+    }
   };
 
   const buildRevokedStudentAccess = (student = {}, revokedYear = "", revokedCode = "") => {
@@ -525,12 +622,31 @@ const AdminDashboard = ({
     confirmAction(editingLessonId ? 'تعديل المحاضرة؟' : 'نشر المحاضرة؟', 'سيتم حفظ التغييرات أو نشر المحتوى الآن.', async () => {
       if (editingLessonId) {
         await updateDoc(doc(db, "lessons", editingLessonId), { ...payload, updatedAt: serverTimestamp() });
+        resetLessonForm();
+        Swal.fire({ icon: "success", title: "تم تعديل المحاضرة", background: theme.surface, color: theme.text });
       } else {
-        await addDoc(collection(db, "lessons"), { ...payload, views: 0, createdAt: serverTimestamp() });
-        await sendPushNotification("محاضرة جديدة", `تم رفع محاضرة: ${payload.title}`);
+        const lessonRef = await addDoc(collection(db, "lessons"), { ...payload, views: 0, createdAt: serverTimestamp() });
+
+        // إرسال الإشعار يتم بعد نجاح الحفظ فقط، وبمعزل عن عملية نشر المحاضرة.
+        sendPushNotification({
+          title: "محاضرة جديدة",
+          body: `تم رفع فيديو: ${payload.title}`,
+          year: payload.year,
+          lessonId: lessonRef.id,
+          lessonTitle: payload.title,
+        }).catch((error) => {
+          console.error("Automatic lesson notification failed:", error);
+        });
+
+        resetLessonForm();
+        Swal.fire({
+          icon: "success",
+          title: "تم نشر المحاضرة بنجاح",
+          text: "جاري إرسال الإشعارات تلقائياً لأجهزة الطلاب.",
+          background: theme.surface,
+          color: theme.text,
+        });
       }
-      resetLessonForm();
-      Swal.fire({ icon: "success", title: editingLessonId ? "تم تعديل المحاضرة" : "تم نشر المحاضرة", background: theme.surface, color: theme.text });
     });
   };
 
