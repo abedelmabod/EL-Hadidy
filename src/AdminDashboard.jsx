@@ -68,14 +68,14 @@ const AdminDashboard = ({
   useEffect(() => { setLessonTitle(newLesson?.title || ""); }, [newLesson?.title]);
 
   const BUNNY_CONFIG = {
-    streamLibraryId: '675556',
+    streamLibraryId: import.meta.env.VITE_BUNNY_STREAM_LIBRARY_ID || '711770',
     streamAccessKey:
       import.meta.env.VITE_BUNNY_STREAM_ACCESS_KEY ||
       import.meta.env.EXPO_PUBLIC_BUNNY_STREAM_ACCESS_KEY ||
       '34f7edd4-5965-4170-8d17af47509f-f96c-467a',
-    streamBaseEndpoint: 'https://video.bunnycdn.com/library/675556/videos',
-    streamEmbedBaseUrl: 'https://iframe.mediadelivery.net/embed/675556',
-    streamPlaybackDomain: 'vz-5db52be9-935.b-cdn.net',
+    streamBaseEndpoint: `https://video.bunnycdn.com/library/${import.meta.env.VITE_BUNNY_STREAM_LIBRARY_ID || '711770'}/videos`,
+    streamEmbedBaseUrl: `https://iframe.mediadelivery.net/embed/${import.meta.env.VITE_BUNNY_STREAM_LIBRARY_ID || '711770'}`,
+    streamPlaybackDomain: 'vz-7d113049-fda.b-cdn.net',
     streamTokenSecurityKey:
       import.meta.env.VITE_BUNNY_STREAM_TOKEN_SECURITY_KEY ||
       'afe36c3e-2b1b-426f-9cbb-2966bf0fbdb3',

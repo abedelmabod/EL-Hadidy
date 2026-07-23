@@ -3,7 +3,7 @@ export const isYoutubeUrl = (url = '') => /youtu\.be|youtube\.com/.test(String(u
 export const isDriveUrl = (url = '') => /drive\.google\.com|docs\.google\.com/.test(String(url));
 
 export const BUNNY_WEB_CONFIG = {
-  streamDomain: 'vz-5db52be9-935.b-cdn.net',
+  streamDomain: 'vz-7d113049-fda.b-cdn.net',
   tokenSecurityKey: 'afe36c3e-2b1b-426f-9cbb-2966bf0fbdb3',
   playbackTokenTtlSeconds: 4 * 60 * 60,
 };
