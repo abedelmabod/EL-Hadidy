@@ -16,6 +16,7 @@ const AdminDashboard = ({
   const [codesYearFilter, setCodesYearFilter] = useState('الكل');
   const [codeQty, setCodeQty] = useState(1);
   const [isUploading, setIsUploading] = useState({ video: false, pdf: false });
+  const [uploadProgress, setUploadProgress] = useState({ video: 0, pdf: 0 });
   const [lessonTitle, setLessonTitle] = useState(newLesson?.title || "");
   const [newSubject, setNewSubject] = useState("");
   const [newSubjectImage, setNewSubjectImage] = useState("");
@@ -75,9 +76,13 @@ const AdminDashboard = ({
     streamBaseEndpoint: 'https://video.bunnycdn.com/library/675556/videos',
     streamEmbedBaseUrl: 'https://iframe.mediadelivery.net/embed/675556',
     streamPlaybackDomain: 'vz-5db52be9-935.b-cdn.net',
-    streamTokenSecurityKey: 'afe36c3e-2b1b-426f-9cbb-2966bf0fbdb3',
+    streamTokenSecurityKey:
+      import.meta.env.VITE_BUNNY_STREAM_TOKEN_SECURITY_KEY ||
+      'afe36c3e-2b1b-426f-9cbb-2966bf0fbdb3',
     storageName: 'el-hadidy-files',
-    storageAccessKey: 'a9869cf5-e131-4930-8b9e87e4901f-b514-4817',
+    storageAccessKey:
+      import.meta.env.VITE_BUNNY_STORAGE_ACCESS_KEY ||
+      'a9869cf5-e131-4930-8b9e87e4901f-b514-4817',
     storageRegionEndpoint: 'uk.storage.bunnycdn.com',
     storagePullZoneUrl: 'https://elhadidy-streaming.b-cdn.net',
   };
@@ -435,6 +440,38 @@ const AdminDashboard = ({
     }
   };
 
+  const uploadBinaryWithProgress = ({ url, file, headers = {}, onProgress }) => new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.open('PUT', url);
+    Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const nextProgress = Math.max(1, Math.min(99, Math.round((event.loaded / event.total) * 100)));
+      onProgress?.(nextProgress);
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(100);
+        resolve(xhr.responseText);
+        return;
+      }
+
+      let message = xhr.responseText || 'فشل رفع الملف إلى Bunny.';
+      try {
+        const parsed = JSON.parse(xhr.responseText);
+        message = parsed?.message || parsed?.Message || parsed?.error || message;
+      } catch {}
+      reject(new Error(message));
+    };
+
+    xhr.onerror = () => reject(new Error('تعذر الاتصال بخدمة Bunny أثناء الرفع.'));
+    xhr.onabort = () => reject(new Error('تم إلغاء رفع الملف.'));
+    xhr.send(file);
+  });
+
   const getStudentDeviceIds = (student = {}) => {
     const ids = Array.isArray(student.deviceIds) ? student.deviceIds : [];
     const legacyId = student.deviceId ? [student.deviceId] : [];
@@ -524,18 +561,15 @@ const AdminDashboard = ({
     const videoId = createdVideo?.guid;
     if (!videoId) throw new Error('Bunny لم يرجع Video ID.');
 
-    const uploadResponse = await fetch(`${BUNNY_CONFIG.streamBaseEndpoint}/${videoId}`, {
-      method: 'PUT',
+    await uploadBinaryWithProgress({
+      url: `${BUNNY_CONFIG.streamBaseEndpoint}/${videoId}`,
+      file,
       headers: {
         AccessKey: BUNNY_CONFIG.streamAccessKey,
         'Content-Type': 'application/octet-stream',
       },
-      body: file,
+      onProgress: (progress) => setUploadProgress(prev => ({ ...prev, video: progress })),
     });
-
-    if (!uploadResponse.ok) {
-      throw new Error(await getBunnyErrorMessage(uploadResponse, 'فشل رفع ملف الفيديو إلى Bunny Stream.'));
-    }
 
     return {
       videoId,
@@ -547,6 +581,7 @@ const AdminDashboard = ({
   const uploadFileToBunny = async (file, type) => {
     if (!file) return;
     setIsUploading(prev => ({ ...prev, [type]: true }));
+    setUploadProgress(prev => ({ ...prev, [type]: 0 }));
 
     try {
       if (type === 'video') {
@@ -556,12 +591,12 @@ const AdminDashboard = ({
         const folder = 'lectures_pdf';
         const fileName = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
         const fileUrl = `${BUNNY_CONFIG.storagePullZoneUrl}/${folder}/${fileName}`;
-        const uploadResponse = await fetch(`https://${BUNNY_CONFIG.storageRegionEndpoint}/${BUNNY_CONFIG.storageName}/${folder}/${fileName}`, {
-          method: 'PUT',
+        await uploadBinaryWithProgress({
+          url: `https://${BUNNY_CONFIG.storageRegionEndpoint}/${BUNNY_CONFIG.storageName}/${folder}/${fileName}`,
+          file,
           headers: { 'AccessKey': BUNNY_CONFIG.storageAccessKey, 'Content-Type': 'application/octet-stream' },
-          body: file,
+          onProgress: (progress) => setUploadProgress(prev => ({ ...prev, pdf: progress })),
         });
-        if (!uploadResponse.ok) throw new Error('فشل رفع ملف PDF إلى Bunny Storage.');
         setNewLesson(prev => ({ ...prev, pdfUrl: fileUrl }));
       }
       Swal.fire({ icon: 'success', title: 'تم الرفع بنجاح', background: theme.surface, color: theme.text, timer: 1500, showConfirmButton: false });
@@ -602,6 +637,16 @@ const AdminDashboard = ({
   };
 
   const saveLesson = () => {
+    if (isUploading.video || isUploading.pdf) {
+      return Swal.fire({
+        icon: "info",
+        title: "الرفع لم يكتمل بعد",
+        text: "انتظر حتى ينتهي رفع الفيديو أو الملف ثم اضغط نشر المحاضرة.",
+        background: theme.surface,
+        color: theme.text,
+      });
+    }
+
     const selectedSubject = subjects.find((subject) => subject.id === newLesson?.subjectId || subject.name === newLesson?.subject);
     const selectedChapter = (chapters[selectedSubject?.id] || []).find((chapter) => chapter.id === newLesson?.chapterId);
     const payload = {
@@ -1931,9 +1976,15 @@ const AdminDashboard = ({
                           <strong>ملف الفيديو:</strong>
                             <div className={`lesson-upload-line ${newLesson?.url ? 'uploaded' : ''}`}>
                               <i className="fas fa-upload"></i>
-                              <span>{newLesson?.url ? 'تم تجهيز الفيديو' : 'ارفع فيديو من الجهاز أو استخدم رابط الفيديو'}</span>
-                              <input type="file" accept="video/*" onChange={(e) => uploadFileToBunny(e.target.files[0], 'video')} />
+                              <span>{isUploading.video ? `جارٍ رفع الفيديو ${uploadProgress.video}%` : newLesson?.url ? 'تم تجهيز الفيديو' : 'ارفع فيديو من الجهاز أو استخدم رابط الفيديو'}</span>
+                              <input type="file" accept="video/*" disabled={isUploading.video} onChange={(e) => uploadFileToBunny(e.target.files[0], 'video')} />
                             </div>
+                            {isUploading.video && (
+                              <div className="upload-progress compact">
+                                <div className="upload-progress-bar" style={{ width: `${uploadProgress.video}%` }}></div>
+                                <span>{uploadProgress.video}%</span>
+                              </div>
+                            )}
                           </label>
                           <label className="wide">
                             <strong>وصف المحاضرة:</strong>
@@ -1983,7 +2034,7 @@ const AdminDashboard = ({
                         {(isUploading.video || isUploading.pdf) && <div className="loader-dots">جارٍ الرفع...</div>}
 
                         <div className="lesson-modal-actions">
-                          <button onClick={saveLesson} className="btn-primary"><i className="fas fa-plus"></i> {editingLessonId ? 'حفظ التعديلات' : 'أضف'}</button>
+                          <button onClick={saveLesson} disabled={isUploading.video || isUploading.pdf} className="btn-primary"><i className="fas fa-plus"></i> {isUploading.video ? `رفع الفيديو ${uploadProgress.video}%` : editingLessonId ? 'حفظ التعديلات' : 'أضف'}</button>
                           <button onClick={openLessonPreview} className="btn-secondary"><i className="fas fa-eye"></i> معاينة</button>
                           <button onClick={() => setShowAddLessonForm(false)} className="btn-secondary">إغلاق</button>
                         </div>
@@ -2088,9 +2139,14 @@ const AdminDashboard = ({
                     <div className={`upload-box ${newLesson?.url ? 'uploaded' : ''}`}>
                       <i className="fas fa-video"></i>
                       <strong>رفع فيديو</strong>
-                      <span>{newLesson?.url ? 'تم تجهيز الفيديو' : 'اضغط لاختيار ملف فيديو'}</span>
-                      <input type="file" accept="video/*" onChange={(e) => uploadFileToBunny(e.target.files[0], 'video')} />
-                      {isUploading.video && <div className="loader-dots">جارٍ الرفع...</div>}
+                      <span>{isUploading.video ? `جارٍ الرفع ${uploadProgress.video}%` : newLesson?.url ? 'تم تجهيز الفيديو' : 'اضغط لاختيار ملف فيديو'}</span>
+                      <input type="file" accept="video/*" disabled={isUploading.video} onChange={(e) => uploadFileToBunny(e.target.files[0], 'video')} />
+                      {isUploading.video && (
+                        <div className="upload-progress">
+                          <div className="upload-progress-bar" style={{ width: `${uploadProgress.video}%` }}></div>
+                          <span>{uploadProgress.video}%</span>
+                        </div>
+                      )}
                     </div>
                     <div className={`upload-box ${newLesson?.pdfUrl ? 'uploaded' : ''}`}>
                       <i className="fas fa-file-pdf"></i>
@@ -2116,7 +2172,7 @@ const AdminDashboard = ({
                     <span className={newLesson?.pdfUrl ? 'ok' : 'warn'}><i className={`fas ${newLesson?.pdfUrl ? 'fa-check-circle' : 'fa-info-circle'}`}></i> الملزمة</span>
                   </div>
                   <div className="form-actions compose-actions">
-                    <button onClick={saveLesson} className="btn-primary">{editingLessonId ? 'حفظ التعديلات' : 'نشر المحاضرة'}</button>
+                    <button onClick={saveLesson} disabled={isUploading.video || isUploading.pdf} className="btn-primary">{isUploading.video ? `رفع الفيديو ${uploadProgress.video}%` : editingLessonId ? 'حفظ التعديلات' : 'نشر المحاضرة'}</button>
                     <button onClick={openLessonPreview} className="btn-secondary"><i className="fas fa-eye"></i> معاينة</button>
                     {editingLessonId && <button onClick={resetLessonForm} className="btn-secondary">إلغاء التعديل</button>}
                   </div>
@@ -2472,7 +2528,7 @@ const AdminDashboard = ({
                 <span className={previewLesson.pdfUrl ? 'ok' : 'warn'}><i className={`fas ${previewLesson.pdfUrl ? 'fa-check-circle' : 'fa-info-circle'}`}></i> {previewLesson.pdfUrl ? 'ملف PDF موجود' : 'بدون ملف PDF'}</span>
                 <span className={previewLesson.isActive ? 'ok' : 'warn'}><i className={`fas ${previewLesson.isActive ? 'fa-eye' : 'fa-eye-slash'}`}></i> {previewLesson.isActive ? 'ستظهر للطلاب' : 'ستحفظ كمخفية'}</span>
               </div>
-              <button className="btn-primary" onClick={() => { setPreviewLesson(null); saveLesson(); }}>اعتماد ونشر</button>
+              <button className="btn-primary" disabled={isUploading.video || isUploading.pdf} onClick={() => { setPreviewLesson(null); saveLesson(); }}>{isUploading.video ? `رفع الفيديو ${uploadProgress.video}%` : 'اعتماد ونشر'}</button>
             </div>
           </div>
         )}
@@ -2689,6 +2745,12 @@ const AdminDashboard = ({
         .upload-box span, .upload-box p { color: ${theme.subText}; font-size: 12px; margin: 0; }
         .upload-box.uploaded span { color: ${theme.success}; font-weight: 900; }
         .upload-box input { position: absolute; width: 100%; height: 100%; top: 0; left: 0; opacity: 0; cursor: pointer; }
+        .upload-box input:disabled, .lesson-upload-line input:disabled { cursor: wait; }
+        .upload-progress { width: 100%; height: 30px; border-radius: 999px; background: ${theme.borderSoft}; overflow: hidden; position: relative; margin-top: 4px; border: 1px solid ${theme.accent}33; }
+        .upload-progress.compact { height: 26px; margin-top: 8px; }
+        .upload-progress-bar { position: absolute; inset: 0 auto 0 0; width: 0%; min-width: 8px; border-radius: inherit; background: linear-gradient(90deg, ${theme.accent}, ${theme.accentAlt || theme.accent}); transition: width 0.22s ease; box-shadow: 0 0 18px ${theme.accent}55; }
+        .upload-progress span { position: relative; z-index: 1; height: 100%; display: grid; place-items: center; color: ${theme.buttonText}; font-size: 12px; font-weight: 900; text-shadow: 0 1px 4px rgba(0,0,0,0.24); }
+        .btn-primary:disabled { opacity: 0.64; cursor: not-allowed; transform: none; filter: grayscale(0.18); }
         .status-active { color: ${theme.success}; background: ${theme.success}14; padding: 5px 12px; border-radius: 6px; font-size: 12px; }
         .status-banned { color: ${theme.danger}; background: ${theme.danger}14; padding: 5px 12px; border-radius: 6px; font-size: 12px; }
         .table-container { background: ${theme.surface}; border-radius: 18px; overflow-x: auto; border: 1px solid ${theme.borderSoft}; box-shadow: ${isLightTheme ? '0 10px 26px rgba(15,23,42,0.06)' : '0 12px 24px rgba(0,0,0,0.08)'}; }

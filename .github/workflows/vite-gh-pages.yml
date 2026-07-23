@@ -38,6 +38,9 @@ jobs:
           }
         env:
           GITHUB_PAGES: "true"
+          VITE_BUNNY_STREAM_ACCESS_KEY: ${{ secrets.VITE_BUNNY_STREAM_ACCESS_KEY }}
+          VITE_BUNNY_STORAGE_ACCESS_KEY: ${{ secrets.VITE_BUNNY_STORAGE_ACCESS_KEY }}
+          VITE_BUNNY_STREAM_TOKEN_SECURITY_KEY: ${{ secrets.VITE_BUNNY_STREAM_TOKEN_SECURITY_KEY }}
       - name: Add SPA route fallback
         shell: pwsh
         run: Copy-Item -LiteralPath dist/index.html -Destination dist/404.html -Force
