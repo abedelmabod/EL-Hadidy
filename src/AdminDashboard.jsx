@@ -17,6 +17,7 @@ const AdminDashboard = ({
   const [codeQty, setCodeQty] = useState(1);
   const [isUploading, setIsUploading] = useState({ video: false, pdf: false });
   const [uploadProgress, setUploadProgress] = useState({ video: 0, pdf: 0 });
+  const [isSavingLesson, setIsSavingLesson] = useState(false);
   const [lessonTitle, setLessonTitle] = useState(newLesson?.title || "");
   const [newSubject, setNewSubject] = useState("");
   const [newSubjectImage, setNewSubjectImage] = useState("");
@@ -72,7 +73,7 @@ const AdminDashboard = ({
     streamAccessKey:
       import.meta.env.VITE_BUNNY_STREAM_ACCESS_KEY ||
       import.meta.env.EXPO_PUBLIC_BUNNY_STREAM_ACCESS_KEY ||
-      '34f7edd4-5965-4170-8d17af47509f-f96c-467a',
+      '9b54c16c-ba12-4b27-bdd9a6b3c7fc-4867-4a25',
     streamBaseEndpoint: `https://video.bunnycdn.com/library/${import.meta.env.VITE_BUNNY_STREAM_LIBRARY_ID || '711770'}/videos`,
     streamEmbedBaseUrl: `https://iframe.mediadelivery.net/embed/${import.meta.env.VITE_BUNNY_STREAM_LIBRARY_ID || '711770'}`,
     streamPlaybackDomain: 'vz-7d113049-fda.b-cdn.net',
@@ -661,36 +662,64 @@ const AdminDashboard = ({
       isActive: newLesson?.isActive !== false,
     };
 
-    if (!payload.title || !payload.url || !payload.subject || !payload.year || !payload.semester) {
-      return Swal.fire({ icon: "warning", title: "أكمل بيانات المحاضرة", background: theme.surface, color: theme.text });
+    const missingFields = [
+      !payload.title && "عنوان المحاضرة",
+      !payload.url && "رابط الفيديو",
+      !payload.subject && "المادة",
+      !payload.year && "الفرقة",
+      !payload.semester && "الترم",
+    ].filter(Boolean);
+
+    if (missingFields.length) {
+      return Swal.fire({
+        icon: "warning",
+        title: "أكمل بيانات المحاضرة",
+        text: `ناقص: ${missingFields.join("، ")}`,
+        background: theme.surface,
+        color: theme.text,
+      });
     }
     confirmAction(editingLessonId ? 'تعديل المحاضرة؟' : 'نشر المحاضرة؟', 'سيتم حفظ التغييرات أو نشر المحتوى الآن.', async () => {
-      if (editingLessonId) {
-        await updateDoc(doc(db, "lessons", editingLessonId), { ...payload, updatedAt: serverTimestamp() });
-        resetLessonForm();
-        Swal.fire({ icon: "success", title: "تم تعديل المحاضرة", background: theme.surface, color: theme.text });
-      } else {
-        const lessonRef = await addDoc(collection(db, "lessons"), { ...payload, views: 0, createdAt: serverTimestamp() });
+      setIsSavingLesson(true);
+      try {
+        if (editingLessonId) {
+          await updateDoc(doc(db, "lessons", editingLessonId), { ...payload, updatedAt: serverTimestamp() });
+          resetLessonForm();
+          Swal.fire({ icon: "success", title: "تم تعديل المحاضرة", background: theme.surface, color: theme.text });
+        } else {
+          const lessonRef = await addDoc(collection(db, "lessons"), { ...payload, views: 0, createdAt: serverTimestamp() });
 
-        // إرسال الإشعار يتم بعد نجاح الحفظ فقط، وبمعزل عن عملية نشر المحاضرة.
-        sendPushNotification({
-          title: "محاضرة جديدة",
-          body: `تم رفع فيديو: ${payload.title}`,
-          year: payload.year,
-          lessonId: lessonRef.id,
-          lessonTitle: payload.title,
-        }).catch((error) => {
-          console.error("Automatic lesson notification failed:", error);
-        });
+          // إرسال الإشعار يتم بعد نجاح الحفظ فقط، وبمعزل عن عملية نشر المحاضرة.
+          sendPushNotification({
+            title: "محاضرة جديدة",
+            body: `تم رفع فيديو: ${payload.title}`,
+            year: payload.year,
+            lessonId: lessonRef.id,
+            lessonTitle: payload.title,
+          }).catch((error) => {
+            console.error("Automatic lesson notification failed:", error);
+          });
 
-        resetLessonForm();
+          resetLessonForm();
+          Swal.fire({
+            icon: "success",
+            title: "تم نشر المحاضرة بنجاح",
+            text: "جاري إرسال الإشعارات تلقائياً لأجهزة الطلاب.",
+            background: theme.surface,
+            color: theme.text,
+          });
+        }
+      } catch (error) {
+        console.error("Lesson save failed:", error);
         Swal.fire({
-          icon: "success",
-          title: "تم نشر المحاضرة بنجاح",
-          text: "جاري إرسال الإشعارات تلقائياً لأجهزة الطلاب.",
+          icon: "error",
+          title: "فشل نشر المحاضرة",
+          text: error?.message || "راجع الاتصال أو صلاحيات Firebase ثم حاول مرة أخرى.",
           background: theme.surface,
           color: theme.text,
         });
+      } finally {
+        setIsSavingLesson(false);
       }
     });
   };
@@ -2034,7 +2063,7 @@ const AdminDashboard = ({
                         {(isUploading.video || isUploading.pdf) && <div className="loader-dots">جارٍ الرفع...</div>}
 
                         <div className="lesson-modal-actions">
-                          <button onClick={saveLesson} disabled={isUploading.video || isUploading.pdf} className="btn-primary"><i className="fas fa-plus"></i> {isUploading.video ? `رفع الفيديو ${uploadProgress.video}%` : editingLessonId ? 'حفظ التعديلات' : 'أضف'}</button>
+                          <button onClick={saveLesson} className="btn-primary"><i className="fas fa-plus"></i> {isSavingLesson ? 'جارٍ النشر...' : isUploading.video ? `رفع الفيديو ${uploadProgress.video}%` : editingLessonId ? 'حفظ التعديلات' : 'أضف'}</button>
                           <button onClick={openLessonPreview} className="btn-secondary"><i className="fas fa-eye"></i> معاينة</button>
                           <button onClick={() => setShowAddLessonForm(false)} className="btn-secondary">إغلاق</button>
                         </div>
@@ -2172,7 +2201,7 @@ const AdminDashboard = ({
                     <span className={newLesson?.pdfUrl ? 'ok' : 'warn'}><i className={`fas ${newLesson?.pdfUrl ? 'fa-check-circle' : 'fa-info-circle'}`}></i> الملزمة</span>
                   </div>
                   <div className="form-actions compose-actions">
-                    <button onClick={saveLesson} disabled={isUploading.video || isUploading.pdf} className="btn-primary">{isUploading.video ? `رفع الفيديو ${uploadProgress.video}%` : editingLessonId ? 'حفظ التعديلات' : 'نشر المحاضرة'}</button>
+                    <button onClick={saveLesson} className="btn-primary">{isSavingLesson ? 'جارٍ النشر...' : isUploading.video ? `رفع الفيديو ${uploadProgress.video}%` : editingLessonId ? 'حفظ التعديلات' : 'نشر المحاضرة'}</button>
                     <button onClick={openLessonPreview} className="btn-secondary"><i className="fas fa-eye"></i> معاينة</button>
                     {editingLessonId && <button onClick={resetLessonForm} className="btn-secondary">إلغاء التعديل</button>}
                   </div>
@@ -2528,7 +2557,7 @@ const AdminDashboard = ({
                 <span className={previewLesson.pdfUrl ? 'ok' : 'warn'}><i className={`fas ${previewLesson.pdfUrl ? 'fa-check-circle' : 'fa-info-circle'}`}></i> {previewLesson.pdfUrl ? 'ملف PDF موجود' : 'بدون ملف PDF'}</span>
                 <span className={previewLesson.isActive ? 'ok' : 'warn'}><i className={`fas ${previewLesson.isActive ? 'fa-eye' : 'fa-eye-slash'}`}></i> {previewLesson.isActive ? 'ستظهر للطلاب' : 'ستحفظ كمخفية'}</span>
               </div>
-              <button className="btn-primary" disabled={isUploading.video || isUploading.pdf} onClick={() => { setPreviewLesson(null); saveLesson(); }}>{isUploading.video ? `رفع الفيديو ${uploadProgress.video}%` : 'اعتماد ونشر'}</button>
+              <button className="btn-primary" onClick={() => { setPreviewLesson(null); saveLesson(); }}>{isSavingLesson ? 'جارٍ النشر...' : isUploading.video ? `رفع الفيديو ${uploadProgress.video}%` : 'اعتماد ونشر'}</button>
             </div>
           </div>
         )}
