@@ -88,7 +88,10 @@ function App() {
   };
 
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
-  const currentPath = window.location.pathname.replace(basePath, '') || '/';
+  const hashPath = window.location.hash.startsWith('#/')
+    ? window.location.hash.slice(1)
+    : '';
+  const currentPath = hashPath || window.location.pathname.replace(basePath, '') || '/';
   if (currentPath === '/privacy' || currentPath === '/privacy-policy') return <PrivacyPolicy />;
   if (currentPath === '/terms') return <TermsPage />;
   if (currentPath === '/delete-account' || currentPath === '/account-deletion') return <DeleteAccountPage />;

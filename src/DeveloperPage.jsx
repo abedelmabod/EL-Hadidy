@@ -2,10 +2,26 @@ import React from 'react';
 import { resolveWebTheme, THEME_STORAGE_KEY } from './theme/theme-config';
 
 const contributions = [
-  { icon: 'fa-code', title: 'برمجة وتطوير المنصة', text: 'بناء موقع الإدارة وتجربة تطبيق الهاتف وربط جميع أجزاء النظام.' },
-  { icon: 'fa-palette', title: 'تصميم وتجهيز الواجهات', text: 'تنظيم تجربة الطالب والمدرس والدعم الفني بما يناسب الاستخدام اليومي.' },
-  { icon: 'fa-database', title: 'إعداد النظام والبيانات', text: 'ربط Firebase وإدارة الحسابات والمحتوى والأكواد وطلبات الدعم.' },
-  { icon: 'fa-circle-play', title: 'تشغيل المحتوى التعليمي', text: 'تجهيز تكامل Bunny Stream لعرض الفيديوهات والملفات بطريقة مستقرة.' },
+  {
+    icon: 'fa-code',
+    title: 'برمجة وتطوير المنصة',
+    text: 'بناء موقع الإدارة وتجربة تطبيق الهاتف وربط جميع أجزاء النظام.',
+  },
+  {
+    icon: 'fa-palette',
+    title: 'تصميم وتجهيز الواجهات',
+    text: 'تنظيم تجربة الطالب والمدرس والدعم الفني بما يناسب الاستخدام اليومي.',
+  },
+  {
+    icon: 'fa-database',
+    title: 'إعداد النظام والبيانات',
+    text: 'ربط Firebase وإدارة الحسابات والمحتوى والأكواد وطلبات الدعم.',
+  },
+  {
+    icon: 'fa-circle-play',
+    title: 'تشغيل المحتوى التعليمي',
+    text: 'تجهيز تكامل Bunny Stream لعرض الفيديوهات والملفات بطريقة مستقرة.',
+  },
 ];
 
 export default function DeveloperPage() {
@@ -13,7 +29,7 @@ export default function DeveloperPage() {
   const baseUrl = import.meta.env.BASE_URL;
 
   return (
-    <main className="developer-page" dir="rtl">
+    <main className="developer-page" dir="rtl" lang="ar">
       <nav className="developer-nav">
         <a href={baseUrl} className="back-link"><i className="fas fa-arrow-right"></i> العودة للمنصة</a>
         <img src={`${baseUrl}logo.png`} alt="منصة الحديدي" />
@@ -21,7 +37,7 @@ export default function DeveloperPage() {
 
       <section className="developer-hero">
         <div className="developer-mark"><i className="fas fa-laptop-code"></i></div>
-        <span className="eyebrow">عن مطوّر المنصة</span>
+        <span className="eyebrow">عن مطور المنصة</span>
         <h1>عبدالمعبود احمد</h1>
         <p>مطور تطبيقات ومواقع، والمسؤول عن برمجة وإعداد وتطوير منصة د. محمد الحديدي التعليمية.</p>
         <a className="contact-number" href="https://wa.me/201206785079" target="_blank" rel="noreferrer">
@@ -77,7 +93,7 @@ export default function DeveloperPage() {
 
       <style>{`
         * { box-sizing: border-box; }
-        .developer-page { min-height: 100vh; background: ${theme.bg}; color: ${theme.text}; font-family: 'Cairo', Arial, sans-serif; padding: 24px; }
+        .developer-page { min-height: 100vh; background: ${theme.bg}; color: ${theme.text}; font-family: 'Cairo', Arial, sans-serif; padding: 24px; unicode-bidi: plaintext; }
         .developer-nav { width: min(1080px, 100%); margin: 0 auto 26px; min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
         .developer-nav img { width: 62px; height: 62px; border-radius: 16px; object-fit: cover; }
         .back-link { display: inline-flex; align-items: center; gap: 9px; color: ${theme.accent}; text-decoration: none; font-weight: 900; border: 1px solid ${theme.borderSoft}; background: ${theme.surface}; padding: 10px 15px; border-radius: 8px; }
@@ -105,7 +121,7 @@ export default function DeveloperPage() {
         .service-list i { color: ${theme.accent}; }
         .section-heading { margin-bottom: 20px; }
         .section-heading span { color: ${theme.accent}; font-weight: 900; font-size: 13px; }
-        .section-heading h2, .technology-panel h2 { margin: 5px 0 0; font-size: 25px; }
+        .section-heading h2 { margin: 5px 0 0; font-size: 25px; }
         .contribution-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
         .contribution-card { background: ${theme.surface}; border: 1px solid ${theme.borderSoft}; border-radius: 8px; padding: 20px; display: flex; align-items: flex-start; gap: 15px; transition: transform .2s ease, border-color .2s ease; }
         .contribution-card:hover { transform: translateY(-3px); border-color: ${theme.accent}88; }

@@ -253,7 +253,7 @@ const AdminDashboard = ({
     });
   };
 
-  const sendPushNotification = async ({ title, body, year, lessonId, lessonTitle }) => {
+  const sendPushNotification = async ({ title, body, year, lessonId, lessonTitle, lesson = {} }) => {
     try {
       const tokens = Array.from(new Set(await collectStudentPushTokens(year)));
 
@@ -278,11 +278,21 @@ const AdminDashboard = ({
         title,
         body,
         priority: 'high',
+        channelId: 'default',
         data: {
           type: 'new_lesson',
           lessonId: lessonId || '',
+          lectureId: lessonId || '',
           lessonTitle: lessonTitle || '',
           year: year || '',
+          accessYear: year || '',
+          sourceCollection: 'lessons',
+          subjectId: lesson.subjectId || '',
+          subjectName: lesson.subject || lesson.subjectName || '',
+          chapterId: lesson.chapterId || '',
+          chapterName: lesson.chapterName || '',
+          videoUrl: lesson.url || '',
+          pdfUrl: lesson.pdfUrl || '',
         },
       }));
 
@@ -483,6 +493,35 @@ const AdminDashboard = ({
     const parsed = Number(student.maxDevices ?? student.deviceLimit ?? 1);
     if (!Number.isFinite(parsed)) return 1;
     return Math.max(1, Math.min(10, Math.floor(parsed)));
+  };
+
+  const isStudentScreenshotAllowed = (student = {}) => (
+    student.allowScreenshots === true ||
+    student.screenshotAllowed === true ||
+    student.canTakeScreenshots === true
+  );
+
+  const toggleStudentScreenshotPermission = async (student) => {
+    if (!student?.id) return;
+    const nextValue = !isStudentScreenshotAllowed(student);
+
+    await updateDoc(doc(db, "students", student.id), {
+      allowScreenshots: nextValue,
+      screenshotAllowed: nextValue,
+      screenshotPermissionUpdatedAt: serverTimestamp(),
+    });
+
+    Swal.fire({
+      icon: 'success',
+      title: nextValue ? 'تم السماح بتصوير الشاشة' : 'تم منع تصوير الشاشة',
+      text: nextValue
+        ? 'هذا الطالب يستطيع عمل Screenshot من التطبيق.'
+        : 'تم رجوع منع تصوير الشاشة لهذا الطالب.',
+      background: theme.surface,
+      color: theme.text,
+      timer: 1700,
+      showConfirmButton: false,
+    });
   };
 
   const resetStudentDevicesPatch = {
@@ -689,22 +728,33 @@ const AdminDashboard = ({
         } else {
           const lessonRef = await addDoc(collection(db, "lessons"), { ...payload, views: 0, createdAt: serverTimestamp() });
 
-          // إرسال الإشعار يتم بعد نجاح الحفظ فقط، وبمعزل عن عملية نشر المحاضرة.
-          sendPushNotification({
-            title: "محاضرة جديدة",
-            body: `تم رفع فيديو: ${payload.title}`,
-            year: payload.year,
-            lessonId: lessonRef.id,
-            lessonTitle: payload.title,
-          }).catch((error) => {
+          let notificationResult = null;
+          let notificationError = null;
+          try {
+            notificationResult = await sendPushNotification({
+              title: "محاضرة جديدة",
+              body: `تم رفع فيديو: ${payload.title}`,
+              year: payload.year,
+              lessonId: lessonRef.id,
+              lessonTitle: payload.title,
+              lesson: {
+                ...payload,
+                id: lessonRef.id,
+              },
+            });
+          } catch (error) {
+            notificationError = error;
             console.error("Automatic lesson notification failed:", error);
-          });
+          }
+          const hasNotificationError = notificationError || notificationResult?.error;
 
           resetLessonForm();
           Swal.fire({
-            icon: "success",
+            icon: hasNotificationError ? "warning" : "success",
             title: "تم نشر المحاضرة بنجاح",
-            text: "جاري إرسال الإشعارات تلقائياً لأجهزة الطلاب.",
+            text: hasNotificationError
+              ? "تم حفظ المحاضرة، لكن تعذر إرسال الإشعارات الآن. حاول مرة أخرى لاحقاً أو راجع الاتصال."
+              : `تم إرسال الإشعارات مباشرة إلى ${notificationResult?.sent || 0} جهاز${notificationResult?.failed ? `، وفشل ${notificationResult.failed}` : ""}.`,
             background: theme.surface,
             color: theme.text,
           });
@@ -2234,6 +2284,7 @@ const AdminDashboard = ({
                 { label: 'الفرقة', value: (s) => s.year || s.codeYear || '' },
                 { label: 'الاشتراك', value: (s) => s.isSubscribed ? 'مفعل' : 'غير مفعل' },
                 { label: 'الأجهزة', value: (s) => `${getStudentDeviceIds(s).length}/${getStudentMaxDevices(s)}` },
+                { label: 'تصوير الشاشة', value: (s) => isStudentScreenshotAllowed(s) ? 'مسموح' : 'ممنوع' },
                 { label: 'الحالة', value: (s) => s.isBanned ? 'محظور' : 'مفعل' },
                 { label: 'الكود المستخدم', value: (s) => s.usedCode || '' },
               ])} className="btn-secondary"><i className="fas fa-file-pdf"></i> تصدير PDF</button>
@@ -2268,6 +2319,7 @@ const AdminDashboard = ({
                           <button title="فتح البروفايل" onClick={() => setSelectedStudentId(s.id)} className="btn-action btn-green"><i className="fas fa-id-card"></i></button>
                           <button title="عدد الأجهزة" onClick={() => updateStudentDeviceLimit(s)} className="btn-action btn-blue"><i className="fas fa-mobile-alt"></i></button>
                           <button title="تصفير الأجهزة" onClick={() => confirmAction('تصفير الأجهزة؟', 'سيتم حذف كل الأجهزة المسجلة لهذا الطالب.', () => updateDoc(doc(db, "students", s.id), resetStudentDevicesPatch))} className="btn-action btn-cyan"><i className="fas fa-sync-alt"></i></button>
+                          <button title={isStudentScreenshotAllowed(s) ? 'منع تصوير الشاشة' : 'السماح بتصوير الشاشة'} onClick={() => toggleStudentScreenshotPermission(s)} className={`btn-action ${isStudentScreenshotAllowed(s) ? 'btn-orange' : 'btn-blue'}`}><i className={`fas ${isStudentScreenshotAllowed(s) ? 'fa-camera' : 'fa-camera-slash'}`}></i></button>
                           <button title="حظر / فك حظر" onClick={() => updateDoc(doc(db, "students", s.id), { isBanned: !s.isBanned, banReason: !s.isBanned ? 'تم حظر الحساب بواسطة الإدارة' : '' })} className={`btn-action ${s.isBanned ? 'btn-green' : 'btn-orange'}`}><i className={`fas ${s.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i></button>
                           <button title="حذف" onClick={() => confirmAction('حذف نهائي؟', '', () => deleteDoc(doc(db, "students", s.id)), true)} className="btn-action btn-red"><i className="fas fa-trash"></i></button>
                         </div>
@@ -2475,6 +2527,7 @@ const AdminDashboard = ({
                 <div><strong>{selectedStudentProfile.codeYear || selectedStudentProfile.accessYear || 'غير مفعل'}</strong><span>فرقة الوصول</span></div>
                 <div><strong>{selectedStudentProfile.isSubscribed ? 'مفعل' : 'غير مفعل'}</strong><span>الاشتراك</span></div>
                 <div><strong>{getStudentDeviceIds(selectedStudentProfile).length}/{getStudentMaxDevices(selectedStudentProfile)}</strong><span>الأجهزة</span></div>
+                <div><strong>{isStudentScreenshotAllowed(selectedStudentProfile) ? 'مسموح' : 'ممنوع'}</strong><span>تصوير الشاشة</span></div>
               </div>
 
               <div className="profile-sections">
@@ -2502,6 +2555,7 @@ const AdminDashboard = ({
               <div className="profile-actions">
                 <button className="btn-action btn-blue" onClick={() => updateStudentDeviceLimit(selectedStudentProfile)}><i className="fas fa-mobile-alt"></i> عدد الأجهزة</button>
                 <button className="btn-action btn-cyan" onClick={() => confirmAction('تصفير الأجهزة؟', 'سيتم حذف كل الأجهزة المسجلة لهذا الطالب.', () => updateDoc(doc(db, "students", selectedStudentProfile.id), resetStudentDevicesPatch))}><i className="fas fa-sync-alt"></i> تصفير الأجهزة</button>
+                <button className={`btn-action ${isStudentScreenshotAllowed(selectedStudentProfile) ? 'btn-orange' : 'btn-blue'}`} onClick={() => toggleStudentScreenshotPermission(selectedStudentProfile)}><i className={`fas ${isStudentScreenshotAllowed(selectedStudentProfile) ? 'fa-camera' : 'fa-camera-slash'}`}></i> {isStudentScreenshotAllowed(selectedStudentProfile) ? 'منع التصوير' : 'السماح بالتصوير'}</button>
                 <button className={`btn-action ${selectedStudentProfile.isBanned ? 'btn-green' : 'btn-orange'}`} onClick={() => updateDoc(doc(db, "students", selectedStudentProfile.id), { isBanned: !selectedStudentProfile.isBanned, banReason: !selectedStudentProfile.isBanned ? 'تم حظر الحساب بواسطة الإدارة' : '' })}><i className={`fas ${selectedStudentProfile.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i> {selectedStudentProfile.isBanned ? 'فك الحظر' : 'حظر الطالب'}</button>
                 <button className="btn-action btn-red" onClick={() => confirmAction('حذف الطالب نهائياً؟', '', async () => { await deleteDoc(doc(db, "students", selectedStudentProfile.id)); setSelectedStudentId(null); }, true)}><i className="fas fa-trash"></i> حذف</button>
               </div>
@@ -2885,6 +2939,9 @@ const AdminDashboard = ({
         .lesson-info p { margin: 0 0 8px; color: ${theme.accent}; font-size: 13px; }
         .lesson-info span { color: ${theme.subText}; font-size: 13px; }
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.56); z-index: 3000; display: grid; place-items: center; padding: 20px; backdrop-filter: blur(5px); }
+        .swal2-container { z-index: 12000 !important; }
+        .swal2-popup { z-index: 12001 !important; direction: rtl; }
+        .swal2-html-container { text-align: right; direction: rtl; }
         .modal-card { position: relative; width: min(520px, 100%); background: ${theme.surface}; border: 1px solid ${theme.border}; border-radius: 24px; padding: 24px; box-shadow: 0 24px 70px rgba(0,0,0,0.35); }
         .modal-card h3 { margin: 0 0 6px; color: ${theme.accent}; }
         .modal-card p { margin: 0 0 18px; color: ${theme.subText}; }
