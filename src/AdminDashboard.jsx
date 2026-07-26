@@ -225,6 +225,14 @@ const AdminDashboard = ({
     return chunks;
   };
 
+  const getPushApiEndpoint = () => {
+    const origin = window.location.origin;
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      return 'https://el-hadidy-ei6w.vercel.app/api/send-push-notifications';
+    }
+    return '/api/send-push-notifications';
+  };
+
   const collectStudentPushTokens = async (targetYear) => {
     const normalizedYear = String(targetYear || '').trim();
     if (!normalizedYear) return [];
@@ -297,21 +305,22 @@ const AdminDashboard = ({
       }));
 
       const responses = await Promise.all(chunkArray(messages).map(async (chunk) => {
-        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        const response = await fetch(getPushApiEndpoint(), {
           method: 'POST',
           headers: {
             Accept: 'application/json',
-            'Accept-Encoding': 'gzip, deflate',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(chunk),
+          body: JSON.stringify({ messages: chunk }),
         });
 
+        const payload = await response.json().catch(() => ({}));
+
         if (!response.ok) {
-          throw new Error(`Expo Push API failed with status ${response.status}`);
+          throw new Error(payload?.error || payload?.message || `Push API failed with status ${response.status}`);
         }
 
-        return response.json();
+        return payload;
       }));
 
       const tickets = responses.flatMap((response) => Array.isArray(response?.data) ? response.data : []);
