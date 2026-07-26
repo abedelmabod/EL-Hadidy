@@ -5,6 +5,11 @@ const APP_NAME = 'منصة الحديدي التعليمية';
 const CONTACT_EMAIL = 'elhadidiyplatform@gmail.com';
 const SUPPORT_PHONE = '+201044811399';
 const LAST_UPDATED = '25 يوليو 2026';
+const OFFICIAL_LINKS = {
+  privacy: 'https://el-hadidy-ei6w.vercel.app/privacy',
+  terms: 'https://el-hadidy-ei6w.vercel.app/terms',
+  deleteAccount: 'https://el-hadidy-ei6w.vercel.app/delete-account',
+};
 
 function LegalLayout({ title, subtitle, children }) {
   const theme = resolveWebTheme(localStorage.getItem('elhadidy-web-theme-mode') || 'dark');
@@ -44,9 +49,9 @@ function LegalLayout({ title, subtitle, children }) {
           gap: '12px',
           flexWrap: 'wrap',
         }}>
-          <a href={`${baseUrl}#/privacy`} style={linkStyle(theme)}>سياسة الخصوصية</a>
-          <a href={`${baseUrl}#/delete-account`} style={linkStyle(theme)}>حذف الحساب</a>
-          <a href={`${baseUrl}#/terms`} style={linkStyle(theme)}>الشروط والأحكام</a>
+          <a href={OFFICIAL_LINKS.privacy} style={linkStyle(theme)}>سياسة الخصوصية</a>
+          <a href={OFFICIAL_LINKS.deleteAccount} style={linkStyle(theme)}>حذف الحساب</a>
+          <a href={OFFICIAL_LINKS.terms} style={linkStyle(theme)}>الشروط والأحكام</a>
         </div>
       </section>
     </main>

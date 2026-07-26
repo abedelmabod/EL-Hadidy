@@ -11,6 +11,12 @@ import {
   signInWithSharedCredentials,
 } from './services/auth-service';
 
+const OFFICIAL_LINKS = {
+  privacy: 'https://el-hadidy-ei6w.vercel.app/privacy',
+  terms: 'https://el-hadidy-ei6w.vercel.app/terms',
+  deleteAccount: 'https://el-hadidy-ei6w.vercel.app/delete-account',
+};
+
 const Login = ({ setUser, theme, themeMode, toggleTheme }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -171,11 +177,11 @@ const Login = ({ setUser, theme, themeMode, toggleTheme }) => {
           </form>
         )}
         <div className="legal-links">
-          <a href={`${import.meta.env.BASE_URL}privacy`}>سياسة الخصوصية</a>
+          <a href={OFFICIAL_LINKS.privacy}>سياسة الخصوصية</a>
           <span>•</span>
-          <a href={`${import.meta.env.BASE_URL}terms`}>الشروط والأحكام</a>
+          <a href={OFFICIAL_LINKS.terms}>الشروط والأحكام</a>
           <span>•</span>
-          <a href={`${import.meta.env.BASE_URL}delete-account`}>حذف الحساب</a>
+          <a href={OFFICIAL_LINKS.deleteAccount}>حذف الحساب</a>
           <span>•</span>
           <a href={`${import.meta.env.BASE_URL}developer`}>عن المطوّر</a>
         </div>
