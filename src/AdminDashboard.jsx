@@ -253,48 +253,124 @@ const AdminDashboard = ({
     return '/api/send-push-notifications';
   };
 
-  const collectStudentPushTokens = async (targetYear) => {
+  const normalizeYearValue = (value) => String(value || '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const getStudentYearValues = (student = {}) => {
+    const values = [
+      student.year,
+      student.codeYear,
+      student.accessYear,
+      student.yearKey,
+      student.grade,
+      ...(Array.isArray(student.accessYears) ? student.accessYears : []),
+      ...(Array.isArray(student.allowedYears) ? student.allowedYears : []),
+    ];
+
+    return Array.from(new Set(values.map(normalizeYearValue).filter(Boolean)));
+  };
+
+  const collectStudentPushTargets = (targetYear) => {
     const normalizedYear = String(targetYear || '').trim();
-    if (!normalizedYear) return [];
+    const normalizedYearKey = normalizeYearValue(normalizedYear);
+    const stats = {
+      targetYear: normalizedYear,
+      matchedStudents: 0,
+      banned: 0,
+      permissionDenied: 0,
+      notInstalledApp: 0,
+      oldTokenSource: 0,
+      noToken: 0,
+      invalidToken: 0,
+      eligibleStudents: 0,
+    };
 
-    const snapshots = await Promise.all([
-      getDocs(query(collection(db, 'students'), where('year', '==', normalizedYear))).catch(() => null),
-      getDocs(query(collection(db, 'students'), where('accessYears', 'array-contains', normalizedYear))).catch(() => null),
-    ]);
+    if (!normalizedYearKey) {
+      return { tokens: [], stats };
+    }
 
-    const studentsById = new Map();
-    snapshots.forEach((snapshot) => {
-      snapshot?.docs?.forEach((studentDoc) => {
-        studentsById.set(studentDoc.id, { id: studentDoc.id, ...studentDoc.data() });
-      });
-    });
+    const tokens = [];
+    studentsDB.forEach((student) => {
+      const studentYears = getStudentYearValues(student);
+      if (!studentYears.includes(normalizedYearKey)) return;
 
-    return Array.from(studentsById.values()).flatMap((student) => {
-      if (student.isBanned || student.notificationPermissionStatus === 'denied') return [];
-      if (student.notificationClientType !== 'standalone') return [];
-      if (student.notificationTokenSource !== 'installed-app-v2') return [];
+      stats.matchedStudents += 1;
+
+      if (student.isBanned) {
+        stats.banned += 1;
+        return;
+      }
+
+      if (student.notificationPermissionStatus === 'denied') {
+        stats.permissionDenied += 1;
+        return;
+      }
+
+      if (student.notificationClientType !== 'standalone') {
+        stats.notInstalledApp += 1;
+        return;
+      }
+
+      if (student.notificationTokenSource !== 'installed-app-v2') {
+        stats.oldTokenSource += 1;
+        return;
+      }
+
       const token = String(student.expoPushToken || '').trim();
-      return isExpoPushToken(token) ? [token] : [];
+      if (!token) {
+        stats.noToken += 1;
+        return;
+      }
+
+      if (!isExpoPushToken(token)) {
+        stats.invalidToken += 1;
+        return;
+      }
+
+      stats.eligibleStudents += 1;
+      tokens.push(token);
     });
+
+    return { tokens: Array.from(new Set(tokens)), stats };
+  };
+
+  const buildPushEmptyMessage = (stats = {}) => {
+    if (!stats.matchedStudents) {
+      return `لا يوجد طلاب مطابقون للفرقة ${stats.targetYear || ''}. راجع الفرقة المختارة أو بيانات الطلاب.`;
+    }
+
+    if (stats.notInstalledApp || stats.oldTokenSource || stats.noToken) {
+      return `يوجد ${stats.matchedStudents} طالب في هذه الفرقة، لكن لا يوجد جهاز مفعّل من نسخة التطبيق الجديدة حتى الآن. افتح الـ APK الجديد على جهاز طالب واحد على الأقل ووافق على الإشعارات.`;
+    }
+
+    if (stats.permissionDenied) {
+      return 'الطلاب المطابقون رفضوا صلاحية الإشعارات من إعدادات الهاتف.';
+    }
+
+    return 'لا توجد أجهزة صالحة لاستقبال الإشعار لهذه الفرقة حالياً.';
   };
 
   const sendPushNotification = async ({ title, body, year, lessonId, lessonTitle, lesson = {} }) => {
     try {
-      const tokens = Array.from(new Set(await collectStudentPushTokens(year)));
+      const { tokens, stats } = collectStudentPushTargets(year);
 
       if (!tokens.length) {
+        const emptyMessage = buildPushEmptyMessage(stats);
         Swal.fire({
           toast: true,
           position: 'top-end',
           icon: 'info',
           title: 'لم يتم إرسال إشعار',
-          text: 'لا توجد أجهزة مفعلة للإشعارات لهذه الفرقة حتى الآن.',
-          timer: 3000,
+          text: emptyMessage,
+          timer: 5200,
           showConfirmButton: false,
           background: theme.surface,
           color: theme.text,
         });
-        return { sent: 0, failed: 0 };
+        return { sent: 0, failed: 0, stats, message: emptyMessage };
       }
 
       const messages = tokens.map((token) => ({
@@ -773,13 +849,16 @@ const AdminDashboard = ({
             console.error("Automatic lesson notification failed:", error);
           }
           const hasNotificationError = notificationError || notificationResult?.error;
+          const hasNoNotificationTargets = !hasNotificationError && (notificationResult?.sent || 0) === 0;
 
           resetLessonForm();
           Swal.fire({
-            icon: hasNotificationError ? "warning" : "success",
+            icon: hasNotificationError || hasNoNotificationTargets ? "warning" : "success",
             title: "تم نشر المحاضرة بنجاح",
             text: hasNotificationError
               ? "تم حفظ المحاضرة، لكن تعذر إرسال الإشعارات الآن. حاول مرة أخرى لاحقاً أو راجع الاتصال."
+              : hasNoNotificationTargets
+                ? (notificationResult?.message || "تم حفظ المحاضرة، لكن لا توجد أجهزة مفعلة للإشعارات لهذه الفرقة حالياً.")
               : `تم إرسال الإشعارات مباشرة إلى ${notificationResult?.sent || 0} جهاز${notificationResult?.failed ? `، وفشل ${notificationResult.failed}` : ""}.`,
             background: theme.surface,
             color: theme.text,
