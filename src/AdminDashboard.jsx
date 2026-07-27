@@ -275,6 +275,41 @@ const AdminDashboard = ({
     );
   };
 
+  const getPushTicketErrorText = (ticket = {}) => (
+    ticket?.details?.error
+    || ticket?.message
+    || ticket?.error
+    || 'Expo rejected the push token'
+  );
+
+  const summarizePushTicketErrors = (tickets = []) => {
+    const errorCounts = tickets.reduce((acc, ticket) => {
+      const reason = getPushTicketErrorText(ticket);
+      acc[reason] = (acc[reason] || 0) + 1;
+      return acc;
+    }, {});
+
+    return Object.entries(errorCounts)
+      .map(([reason, count]) => `${count} ${reason}`)
+      .join('، ');
+  };
+
+  const buildPushFailureMessage = ({ sent = 0, failed = 0, ticketErrors = [] } = {}) => {
+    const summary = summarizePushTicketErrors(ticketErrors);
+    const hasInvalidCredentials = ticketErrors.some((ticket) => getPushTicketErrorText(ticket) === 'InvalidCredentials');
+    const hasDeviceNotRegistered = ticketErrors.some((ticket) => getPushTicketErrorText(ticket) === 'DeviceNotRegistered');
+
+    if (hasInvalidCredentials) {
+      return `تم العثور على توكن صالح، لكن Expo رفض الإرسال بسبب إعدادات FCM/Android Credentials. تم الإرسال إلى ${sent} جهاز وفشل ${failed}. السبب: ${summary}.`;
+    }
+
+    if (hasDeviceNotRegistered) {
+      return `تم العثور على توكن صالح، لكن الجهاز غير مسجل عند Expo حالياً. افتح التطبيق المثبت مرة أخرى لتجديد التوكن. تم الإرسال إلى ${sent} جهاز وفشل ${failed}. السبب: ${summary}.`;
+    }
+
+    return `تم العثور على توكن صالح، لكن فشل إرسال الإشعار إلى ${failed} جهاز${sent ? ` وتم الإرسال إلى ${sent}` : ''}. السبب: ${summary || 'رد غير واضح من Expo'}.`;
+  };
+
   const chunkArray = (items, size = 100) => {
     const chunks = [];
     for (let index = 0; index < items.length; index += size) {
@@ -491,22 +526,33 @@ const AdminDashboard = ({
       }));
 
       const tickets = responses.flatMap((response) => Array.isArray(response?.data) ? response.data : []);
-      const failed = tickets.filter((ticket) => ticket.status === 'error').length;
+      const ticketErrors = tickets.filter((ticket) => ticket.status === 'error');
+      const missingTickets = Math.max(0, messages.length - tickets.length);
+      const failed = ticketErrors.length + missingTickets;
       const sent = Math.max(0, messages.length - failed);
+      const pushResultMessage = failed
+        ? buildPushFailureMessage({ sent, failed, ticketErrors })
+        : `تم الإرسال إلى ${sent} جهاز.`;
 
       Swal.fire({
         toast: true,
         position: 'top-end',
         icon: failed ? 'warning' : 'success',
         title: failed ? 'تم إرسال بعض الإشعارات' : 'تم إرسال الإشعارات',
-        text: `تم الإرسال إلى ${sent} جهاز${failed ? `، وفشل ${failed}` : ''}.`,
-        timer: 3200,
+        text: pushResultMessage,
+        timer: failed ? 7000 : 3200,
         showConfirmButton: false,
         background: theme.surface,
         color: theme.text,
       });
 
-      return { sent, failed, stats: { ...stats, validTokens: tokens.length } };
+      return {
+        sent,
+        failed,
+        ticketErrors,
+        message: pushResultMessage,
+        stats: { ...stats, validTokens: tokens.length },
+      };
     } catch (error) {
       console.error('Push notification error:', error);
       Swal.fire({
@@ -923,7 +969,8 @@ const AdminDashboard = ({
             console.error("Automatic lesson notification failed:", error);
           }
           const hasNotificationError = notificationError || notificationResult?.error;
-          const hasNoNotificationTargets = !hasNotificationError && (notificationResult?.sent || 0) === 0;
+          const hasFailedNotifications = !hasNotificationError && (notificationResult?.failed || 0) > 0;
+          const hasNoNotificationTargets = !hasNotificationError && !hasFailedNotifications && (notificationResult?.sent || 0) === 0;
           const noNotificationTargetsMessage = notificationResult?.message || buildPushEmptyMessage({
             ...(notificationResult?.stats || {}),
             targetYear: payload.year,
@@ -931,10 +978,12 @@ const AdminDashboard = ({
 
           resetLessonForm();
           Swal.fire({
-            icon: hasNotificationError || hasNoNotificationTargets ? "warning" : "success",
+            icon: hasNotificationError || hasFailedNotifications || hasNoNotificationTargets ? "warning" : "success",
             title: "تم نشر المحاضرة بنجاح",
             text: hasNotificationError
               ? "تم حفظ المحاضرة، لكن تعذر إرسال الإشعارات الآن. حاول مرة أخرى لاحقاً أو راجع الاتصال."
+              : hasFailedNotifications
+                ? (notificationResult?.message || "تم حفظ المحاضرة، لكن فشل إرسال الإشعار لبعض الأجهزة.")
               : hasNoNotificationTargets
                 ? noNotificationTargetsMessage
               : `تم إرسال الإشعارات مباشرة إلى ${notificationResult?.sent || 0} جهاز${notificationResult?.failed ? `، وفشل ${notificationResult.failed}` : ""}.`,
