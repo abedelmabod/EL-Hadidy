@@ -238,6 +238,7 @@ const AdminDashboard = ({
   const isExpoPushToken = (token) => /^ExponentPushToken\[[\w-]+\]$|^ExpoPushToken\[[\w-]+\]$/.test(String(token || '').trim());
 
   const normalizeMetaValue = (value) => String(value || '').trim().toLowerCase();
+  const MOBILE_APP_ID = 'com.elhadidy.platform';
 
   const toTokenList = (value) => {
     if (!value) return [];
@@ -254,6 +255,25 @@ const AdminDashboard = ({
     ...toTokenList(student.notificationToken),
     ...toTokenList(student.notificationTokens),
   ]));
+
+  const isInstalledNotificationClient = (student = {}) => {
+    const clientType = normalizeMetaValue(student.notificationClientType);
+    const appOwnership = normalizeMetaValue(student.notificationAppOwnership);
+    const tokenSource = normalizeMetaValue(student.notificationTokenSource);
+    const appId = normalizeMetaValue(student.notificationAppId);
+    const executionEnvironment = normalizeMetaValue(student.notificationExecutionEnvironment);
+
+    if (clientType === 'expo-go' || appOwnership === 'expo' || executionEnvironment === 'storeclient') {
+      return false;
+    }
+
+    return (
+      clientType === 'standalone'
+      || appOwnership === 'standalone'
+      || tokenSource === 'installed-app-v2'
+      || appId === MOBILE_APP_ID
+    );
+  };
 
   const chunkArray = (items, size = 100) => {
     const chunks = [];
@@ -339,7 +359,7 @@ const AdminDashboard = ({
         return;
       }
 
-      if (normalizeMetaValue(student.notificationClientType) !== 'standalone') {
+      if (!isInstalledNotificationClient(student)) {
         stats.notInstalledApp += 1;
         return;
       }
@@ -375,8 +395,25 @@ const AdminDashboard = ({
       return `لا يوجد طلاب مطابقون للفرقة ${stats.targetYear || ''}. راجع الفرقة المختارة أو بيانات الطلاب.`;
     }
 
-    if (stats.notInstalledApp || stats.oldTokenSource || stats.noToken) {
-      return `يوجد ${stats.matchedStudents} طالب في هذه الفرقة، لكن لا يوجد جهاز مفعّل من نسخة التطبيق الجديدة حتى الآن. التفاصيل: ${stats.notInstalledApp} توكن من Expo/قديم، ${stats.oldTokenSource} مصدر قديم، ${stats.noToken} بدون توكن، ${stats.invalidToken || 0} توكن غير صالح. ثبّت APK الإصدار 4 وافتح حساب طالب ووافق على الإشعارات.`;
+    const details = [
+      `${stats.notInstalledApp || 0} من Expo/قديم`,
+      `${stats.oldTokenSource || 0} مصدر قديم`,
+      `${stats.noToken || 0} بدون توكن`,
+      `${stats.invalidToken || 0} توكن غير صالح`,
+      `${stats.permissionDenied || 0} رافض الصلاحية`,
+      `${stats.banned || 0} حساب محظور`,
+      `${stats.validTokens || 0} توكن صالح`,
+    ].join('، ');
+
+    if (
+      stats.notInstalledApp
+      || stats.oldTokenSource
+      || stats.noToken
+      || stats.invalidToken
+      || stats.permissionDenied
+      || stats.banned
+    ) {
+      return `يوجد ${stats.matchedStudents} طالب في هذه الفرقة، لكن لا يوجد جهاز صالح لاستقبال الإشعار حالياً. التفاصيل: ${details}. افتح APK الإصدار 4 من حساب طالب مطابق لنفس الفرقة ووافق على الإشعارات.`;
     }
 
     if (stats.invalidToken) {
