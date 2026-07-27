@@ -252,6 +252,7 @@ const AdminDashboard = ({
     return Array.from(studentsById.values()).flatMap((student) => {
       if (student.isBanned || student.notificationPermissionStatus === 'denied') return [];
       if (student.notificationClientType !== 'standalone') return [];
+      if (student.notificationTokenSource !== 'installed-app-v2') return [];
       const tokens = [
         student.expoPushToken,
         ...(Array.isArray(student.expoPushTokens) ? student.expoPushTokens : []),
