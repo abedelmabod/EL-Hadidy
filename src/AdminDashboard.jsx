@@ -7,7 +7,7 @@ import { keepEnglishDigitsOnly } from './services/auth-service';
 
 const AdminDashboard = ({ 
   activeTab, setActiveTab, studentsDB = [], lessons = [], codesDB = [], logsDB = [], supportRequests = [],
-  setUser, newLesson, setNewLesson, subjects = [], theme, themeMode, toggleTheme
+  setUser, setLessons, newLesson, setNewLesson, subjects = [], theme, themeMode, toggleTheme
 }) => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -119,6 +119,12 @@ const AdminDashboard = ({
     if (result.isConfirmed) actionCallback();
   };
 
+  const removeLessonsFromView = (lessonIds = []) => {
+    const ids = new Set(lessonIds.filter(Boolean));
+    if (!ids.size || typeof setLessons !== "function") return;
+    setLessons((currentLessons = []) => currentLessons.filter((lesson) => !ids.has(lesson.id)));
+  };
+
   const getDeviceIcon = (type) => {
     switch (type?.toLowerCase()) {
       case 'windows': return <i className="fab fa-windows" style={{color: theme.info, fontSize:'16px'}} title="Windows"></i>;
@@ -156,6 +162,7 @@ const AdminDashboard = ({
       const lessonsSnapshot = await getDocs(query(collection(db, "lessons"), where("subjectId", "==", subject.id)));
       lessonsSnapshot.forEach((lessonDoc) => batch.delete(doc(db, "lessons", lessonDoc.id)));
       await batch.commit();
+      removeLessonsFromView(lessonsSnapshot.docs.map((lessonDoc) => lessonDoc.id));
       Swal.fire({ icon: 'success', title: 'تم حذف الكورس', background: theme.surface, color: theme.text });
     }, true);
   };
@@ -193,6 +200,19 @@ const AdminDashboard = ({
       const lessonsSnapshot = await getDocs(query(collection(db, "lessons"), where("chapterId", "==", chapter.id)));
       lessonsSnapshot.forEach((lessonDoc) => batch.delete(doc(db, "lessons", lessonDoc.id)));
       await batch.commit();
+      removeLessonsFromView(lessonsSnapshot.docs.map((lessonDoc) => lessonDoc.id));
+      Swal.fire({ icon: 'success', title: 'تم حذف الفصل', background: theme.surface, color: theme.text });
+    }, true);
+  };
+
+  const handleDeleteLesson = (lesson) => {
+    confirmAction('حذف المحاضرة؟', 'سيتم حذف المحاضرة وتحديث عدادات المحتوى فوراً.', async () => {
+      await deleteDoc(doc(db, "lessons", lesson.id));
+      removeLessonsFromView([lesson.id]);
+      if (playingVideoId === lesson.id) setPlayingVideoId(null);
+      if (statsLesson?.id === lesson.id) setStatsLesson(null);
+      if (previewLesson?.id === lesson.id) setPreviewLesson(null);
+      Swal.fire({ icon: 'success', title: 'تم حذف المحاضرة', background: theme.surface, color: theme.text });
     }, true);
   };
 
@@ -2024,7 +2044,7 @@ const AdminDashboard = ({
                           <button onClick={() => toggleLessonVisibility(lesson.id, lesson.isActive)} className={`btn-action ${lesson.isActive === false ? 'btn-green' : 'btn-orange'}`}>{lesson.isActive === false ? 'إظهار' : 'إخفاء'}</button>
                           <button onClick={() => handleEditLesson(lesson)} className="btn-action btn-cyan">تعديل</button>
                           <button onClick={() => setStatsLesson(lesson)} className="btn-action btn-green">إحصائيات</button>
-                          <button onClick={() => confirmAction('حذف المحاضرة؟', '', () => deleteDoc(doc(db, "lessons", lesson.id)), true)} className="btn-action btn-red">حذف</button>
+                          <button onClick={() => handleDeleteLesson(lesson)} className="btn-action btn-red">حذف</button>
                         </div>
                         {playingVideoId === lesson.id && lesson.url && (
                           <div className="chapter-video-player">
