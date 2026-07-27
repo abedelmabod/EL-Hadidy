@@ -237,6 +237,24 @@ const AdminDashboard = ({
 
   const isExpoPushToken = (token) => /^ExponentPushToken\[[\w-]+\]$|^ExpoPushToken\[[\w-]+\]$/.test(String(token || '').trim());
 
+  const normalizeMetaValue = (value) => String(value || '').trim().toLowerCase();
+
+  const toTokenList = (value) => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.flatMap(toTokenList);
+    if (typeof value === 'object') return Object.values(value).flatMap(toTokenList);
+    return [String(value).trim()].filter(Boolean);
+  };
+
+  const getStudentPushTokens = (student = {}) => Array.from(new Set([
+    ...toTokenList(student.expoPushToken),
+    ...toTokenList(student.expoPushTokens),
+    ...toTokenList(student.pushToken),
+    ...toTokenList(student.pushTokens),
+    ...toTokenList(student.notificationToken),
+    ...toTokenList(student.notificationTokens),
+  ]));
+
   const chunkArray = (items, size = 100) => {
     const chunks = [];
     for (let index = 0; index < items.length; index += size) {
@@ -285,6 +303,8 @@ const AdminDashboard = ({
       oldTokenSource: 0,
       noToken: 0,
       invalidToken: 0,
+      tokenCandidates: 0,
+      validTokens: 0,
       eligibleStudents: 0,
     };
 
@@ -319,29 +339,32 @@ const AdminDashboard = ({
         return;
       }
 
-      if (student.notificationClientType !== 'standalone') {
+      if (normalizeMetaValue(student.notificationClientType) !== 'standalone') {
         stats.notInstalledApp += 1;
         return;
       }
 
-      if (student.notificationTokenSource !== 'installed-app-v2') {
+      if (normalizeMetaValue(student.notificationTokenSource) !== 'installed-app-v2') {
         stats.oldTokenSource += 1;
         return;
       }
 
-      const token = String(student.expoPushToken || '').trim();
-      if (!token) {
+      const candidateTokens = getStudentPushTokens(student);
+      if (!candidateTokens.length) {
         stats.noToken += 1;
         return;
       }
 
-      if (!isExpoPushToken(token)) {
-        stats.invalidToken += 1;
+      stats.tokenCandidates += candidateTokens.length;
+      const validTokens = candidateTokens.filter(isExpoPushToken);
+      if (!validTokens.length) {
+        stats.invalidToken += candidateTokens.length;
         return;
       }
 
       stats.eligibleStudents += 1;
-      tokens.push(token);
+      stats.validTokens += validTokens.length;
+      tokens.push(...validTokens);
     });
 
     return { tokens: Array.from(new Set(tokens)), stats };
@@ -353,7 +376,7 @@ const AdminDashboard = ({
     }
 
     if (stats.notInstalledApp || stats.oldTokenSource || stats.noToken) {
-      return `يوجد ${stats.matchedStudents} طالب في هذه الفرقة، لكن لا يوجد جهاز مفعّل من نسخة التطبيق الجديدة حتى الآن. التفاصيل: ${stats.notInstalledApp} توكن من Expo/قديم، ${stats.oldTokenSource} مصدر قديم، ${stats.noToken} بدون توكن. ثبّت APK الإصدار 4 وافتح حساب طالب ووافق على الإشعارات.`;
+      return `يوجد ${stats.matchedStudents} طالب في هذه الفرقة، لكن لا يوجد جهاز مفعّل من نسخة التطبيق الجديدة حتى الآن. التفاصيل: ${stats.notInstalledApp} توكن من Expo/قديم، ${stats.oldTokenSource} مصدر قديم، ${stats.noToken} بدون توكن، ${stats.invalidToken || 0} توكن غير صالح. ثبّت APK الإصدار 4 وافتح حساب طالب ووافق على الإشعارات.`;
     }
 
     if (stats.invalidToken) {
@@ -446,7 +469,7 @@ const AdminDashboard = ({
         color: theme.text,
       });
 
-      return { sent, failed };
+      return { sent, failed, stats: { ...stats, validTokens: tokens.length } };
     } catch (error) {
       console.error('Push notification error:', error);
       Swal.fire({
@@ -864,6 +887,10 @@ const AdminDashboard = ({
           }
           const hasNotificationError = notificationError || notificationResult?.error;
           const hasNoNotificationTargets = !hasNotificationError && (notificationResult?.sent || 0) === 0;
+          const noNotificationTargetsMessage = notificationResult?.message || buildPushEmptyMessage({
+            ...(notificationResult?.stats || {}),
+            targetYear: payload.year,
+          });
 
           resetLessonForm();
           Swal.fire({
@@ -872,7 +899,7 @@ const AdminDashboard = ({
             text: hasNotificationError
               ? "تم حفظ المحاضرة، لكن تعذر إرسال الإشعارات الآن. حاول مرة أخرى لاحقاً أو راجع الاتصال."
               : hasNoNotificationTargets
-                ? (notificationResult?.message || "تم حفظ المحاضرة، لكن لا توجد أجهزة مفعلة للإشعارات لهذه الفرقة حالياً.")
+                ? noNotificationTargetsMessage
               : `تم إرسال الإشعارات مباشرة إلى ${notificationResult?.sent || 0} جهاز${notificationResult?.failed ? `، وفشل ${notificationResult.failed}` : ""}.`,
             background: theme.surface,
             color: theme.text,
