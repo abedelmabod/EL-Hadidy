@@ -343,7 +343,7 @@ const AdminDashboard = ({
     }
 
     if (stats.notInstalledApp || stats.oldTokenSource || stats.noToken) {
-      return `يوجد ${stats.matchedStudents} طالب في هذه الفرقة، لكن لا يوجد جهاز مفعّل من نسخة التطبيق الجديدة حتى الآن. افتح الـ APK الجديد على جهاز طالب واحد على الأقل ووافق على الإشعارات.`;
+      return `يوجد ${stats.matchedStudents} طالب في هذه الفرقة، لكن لا يوجد جهاز مفعّل من نسخة التطبيق الجديدة حتى الآن. التفاصيل: ${stats.notInstalledApp} توكن من Expo/قديم، ${stats.oldTokenSource} مصدر قديم، ${stats.noToken} بدون توكن. ثبّت APK الإصدار 3 وافتح حساب طالب ووافق على الإشعارات.`;
     }
 
     if (stats.permissionDenied) {
