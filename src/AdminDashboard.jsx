@@ -273,7 +273,7 @@ const AdminDashboard = ({
     return Array.from(new Set(values.map(normalizeYearValue).filter(Boolean)));
   };
 
-  const collectStudentPushTargets = (targetYear) => {
+  const collectStudentPushTargets = async (targetYear) => {
     const normalizedYear = String(targetYear || '').trim();
     const normalizedYearKey = normalizeYearValue(normalizedYear);
     const stats = {
@@ -292,8 +292,18 @@ const AdminDashboard = ({
       return { tokens: [], stats };
     }
 
+    const studentsById = new Map(studentsDB.map((student) => [student.id, student]));
+    try {
+      const freshStudentsSnapshot = await getDocs(collection(db, 'students'));
+      freshStudentsSnapshot.docs.forEach((studentDoc) => {
+        studentsById.set(studentDoc.id, { id: studentDoc.id, ...studentDoc.data() });
+      });
+    } catch (error) {
+      console.warn('Could not refresh students before sending push notifications:', error);
+    }
+
     const tokens = [];
-    studentsDB.forEach((student) => {
+    Array.from(studentsById.values()).forEach((student) => {
       const studentYears = getStudentYearValues(student);
       if (!studentYears.includes(normalizedYearKey)) return;
 
@@ -343,7 +353,11 @@ const AdminDashboard = ({
     }
 
     if (stats.notInstalledApp || stats.oldTokenSource || stats.noToken) {
-      return `يوجد ${stats.matchedStudents} طالب في هذه الفرقة، لكن لا يوجد جهاز مفعّل من نسخة التطبيق الجديدة حتى الآن. التفاصيل: ${stats.notInstalledApp} توكن من Expo/قديم، ${stats.oldTokenSource} مصدر قديم، ${stats.noToken} بدون توكن. ثبّت APK الإصدار 3 وافتح حساب طالب ووافق على الإشعارات.`;
+      return `يوجد ${stats.matchedStudents} طالب في هذه الفرقة، لكن لا يوجد جهاز مفعّل من نسخة التطبيق الجديدة حتى الآن. التفاصيل: ${stats.notInstalledApp} توكن من Expo/قديم، ${stats.oldTokenSource} مصدر قديم، ${stats.noToken} بدون توكن. ثبّت APK الإصدار 4 وافتح حساب طالب ووافق على الإشعارات.`;
+    }
+
+    if (stats.invalidToken) {
+      return `يوجد ${stats.invalidToken} توكن إشعارات غير صالح لهذه الفرقة. افتح التطبيق من نسخة APK الإصدار 4 مرة أخرى لتجديد التوكن.`;
     }
 
     if (stats.permissionDenied) {
@@ -355,7 +369,7 @@ const AdminDashboard = ({
 
   const sendPushNotification = async ({ title, body, year, lessonId, lessonTitle, lesson = {} }) => {
     try {
-      const { tokens, stats } = collectStudentPushTargets(year);
+      const { tokens, stats } = await collectStudentPushTargets(year);
 
       if (!tokens.length) {
         const emptyMessage = buildPushEmptyMessage(stats);
