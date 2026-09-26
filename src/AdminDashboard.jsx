@@ -49,6 +49,8 @@ const AdminDashboard = ({
   const [selectedCodeIds, setSelectedCodeIds] = useState([]);
   const [showCodes, setShowCodes] = useState(false);
   const [previewLesson, setPreviewLesson] = useState(null);
+  const [draggingLessonId, setDraggingLessonId] = useState(null);
+  const [dragOverLessonId, setDragOverLessonId] = useState(null);
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [showResolvedSupportRequests, setShowResolvedSupportRequests] = useState(false);
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
@@ -75,6 +77,7 @@ const AdminDashboard = ({
   const isLightTheme = theme?.mode === 'light';
   const visibleBorder = isLightTheme ? '#CBD5E1' : theme.borderSoft;
   const strongBorder = isLightTheme ? '#B6C2D2' : theme.borderSoft;
+  const warningColor = theme.warning || theme.accentAlt || theme.accent;
 
   useEffect(() => { setLessonTitle(newLesson?.title || ""); }, [newLesson?.title]);
 
@@ -148,7 +151,14 @@ const AdminDashboard = ({
   const handleAddSubject = async () => {
     if (!newSubject.trim()) return;
     try {
-      await addDoc(collection(db, "subjects"), { name: newSubject.trim(), image: newSubjectImage.trim(), createdAt: new Date() });
+      const subjectYear = isContentYearOpen ? selectedContentYear : "";
+      await addDoc(collection(db, "subjects"), {
+        name: newSubject.trim(),
+        image: newSubjectImage.trim(),
+        year: subjectYear,
+        accessYears: subjectYear ? [subjectYear] : [],
+        createdAt: new Date(),
+      });
       setNewSubject("");
       setNewSubjectImage("");
       Swal.fire({ icon: 'success', title: 'تمت إضافة المادة', background: theme.surface, color: theme.text, timer: 1500, showConfirmButton: false });
@@ -237,6 +247,95 @@ const AdminDashboard = ({
       updateDoc(doc(db, "chapters", current.id), { order: target.order ?? nextIndex }),
       updateDoc(doc(db, "chapters", target.id), { order: current.order ?? index }),
     ]);
+  };
+
+  const timestampToMillis = (value) => {
+    if (!value) return 0;
+    if (typeof value?.toMillis === 'function') return value.toMillis();
+    if (typeof value?.toDate === 'function') return value.toDate().getTime();
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === 'number') return value;
+
+    const parsed = Date.parse(String(value));
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const getLessonOrder = (lesson = {}) => {
+    const order = Number(lesson.order ?? lesson.sortOrder ?? lesson.lessonOrder ?? lesson.sequence);
+    return Number.isFinite(order) ? order : Number.POSITIVE_INFINITY;
+  };
+
+  const lessonPublishedTime = (lesson = {}) => Math.max(
+    timestampToMillis(lesson.createdAt),
+    timestampToMillis(lesson.uploadedAt),
+    timestampToMillis(lesson.publishedAt),
+    timestampToMillis(lesson.updatedAt),
+    timestampToMillis(lesson.date)
+  );
+
+  const sortLessonsForDisplay = (items = []) => [...items].sort((a, b) => {
+    const orderDiff = getLessonOrder(a) - getLessonOrder(b);
+    if (orderDiff) return orderDiff;
+    const timeDiff = lessonPublishedTime(b) - lessonPublishedTime(a);
+    if (timeDiff) return timeDiff;
+    return String(a.title || '').localeCompare(String(b.title || ''), 'ar');
+  });
+
+  const getNextLessonOrder = (payload) => {
+    const scopedLessons = lessons.filter((lesson) => {
+      const sameYear = lesson.year === payload.year;
+      const sameSemester = lesson.semester === payload.semester;
+      const sameSubject = lesson.subjectId
+        ? lesson.subjectId === payload.subjectId
+        : lesson.subject === payload.subject;
+      const sameChapter = payload.chapterId
+        ? lesson.chapterId === payload.chapterId
+        : !lesson.chapterId && String(lesson.chapterName || '') === String(payload.chapterName || '');
+
+      return sameYear && sameSemester && sameSubject && sameChapter;
+    });
+
+    return scopedLessons.reduce((maxOrder, lesson, index) => {
+      const order = getLessonOrder(lesson);
+      return Math.max(maxOrder, Number.isFinite(order) ? order : index);
+    }, -1) + 1;
+  };
+
+  const reorderLessons = async (chapterLessons = [], fromIndex, toIndex) => {
+    const orderedLessons = sortLessonsForDisplay(chapterLessons);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= orderedLessons.length || toIndex >= orderedLessons.length || fromIndex === toIndex) return;
+
+    const [movedLesson] = orderedLessons.splice(fromIndex, 1);
+    orderedLessons.splice(toIndex, 0, movedLesson);
+
+    await Promise.all(orderedLessons.map((lesson, lessonIndex) => {
+      return updateDoc(doc(db, "lessons", lesson.id), {
+        order: lessonIndex,
+        updatedAt: serverTimestamp(),
+      });
+    }));
+  };
+
+  const handleMoveLesson = async (lessonId, direction, chapterLessons = []) => {
+    const orderedLessons = sortLessonsForDisplay(chapterLessons);
+    const index = orderedLessons.findIndex((lesson) => lesson.id === lessonId);
+    const nextIndex = direction === "up" ? index - 1 : index + 1;
+    await reorderLessons(orderedLessons, index, nextIndex);
+  };
+
+  const handleDropLesson = async (targetLessonId, chapterLessons = []) => {
+    if (!draggingLessonId || draggingLessonId === targetLessonId) {
+      setDraggingLessonId(null);
+      setDragOverLessonId(null);
+      return;
+    }
+
+    const orderedLessons = sortLessonsForDisplay(chapterLessons);
+    const fromIndex = orderedLessons.findIndex((lesson) => lesson.id === draggingLessonId);
+    const toIndex = orderedLessons.findIndex((lesson) => lesson.id === targetLessonId);
+    await reorderLessons(orderedLessons, fromIndex, toIndex);
+    setDraggingLessonId(null);
+    setDragOverLessonId(null);
   };
 
   const handleLogout = () => {
@@ -858,7 +957,14 @@ const AdminDashboard = ({
     try {
       if (type === 'video') {
         const uploadedVideo = await uploadVideoToBunnyStream(file);
-        setNewLesson(prev => ({ ...prev, url: uploadedVideo.embedUrl, videoKind: 'bunny' }));
+        setNewLesson(prev => ({
+          ...prev,
+          url: uploadedVideo.embedUrl,
+          videoKind: 'bunny',
+          bunnyVideoId: uploadedVideo.videoId,
+          bunnyStatus: 'processing',
+          bunnyTitle: uploadedVideo.title,
+        }));
       } else {
         const folder = 'lectures_pdf';
         const fileName = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
@@ -878,6 +984,101 @@ const AdminDashboard = ({
 
   const isBunnyEmbedUrl = (url = '') => /(?:iframe|player)\.mediadelivery\.net\/embed\//i.test(String(url || ''));
 
+  const extractBunnyVideoId = (url = '') => {
+    const match = String(url || '').match(/(?:iframe|player)\.mediadelivery\.net\/embed\/[^/]+\/([^/?#]+)/i);
+    return match?.[1] || "";
+  };
+
+  const normalizeBunnyStatus = (status) => {
+    const value = String(status ?? '').toLowerCase();
+    if (['4', 'finished', 'ready', 'encoded', 'success'].includes(value)) return 'ready';
+    if (['5', '6', 'failed', 'error', 'encoding failed', 'uploadfailed'].includes(value.replace(/\s+/g, ''))) return 'failed';
+    if (['0', '1', '2', '3', 'created', 'uploaded', 'processing', 'encoding', 'transcoding'].includes(value)) return 'processing';
+    return value || 'processing';
+  };
+
+  const getBunnyStatusLabel = (lesson = {}) => {
+    const status = normalizeBunnyStatus(lesson.bunnyStatus ?? lesson.status);
+    if (!isBunnyEmbedUrl(lesson.url || '') && lesson.videoKind !== 'bunny') return null;
+    if (status === 'ready') return { text: 'Bunny جاهز', className: 'ready', icon: 'fa-check-circle' };
+    if (status === 'failed') return { text: 'Bunny فشل', className: 'failed', icon: 'fa-times-circle' };
+    return { text: 'Bunny processing', className: 'processing', icon: 'fa-clock' };
+  };
+
+  const refreshBunnyStatus = async (lesson) => {
+    const videoId = lesson?.bunnyVideoId || extractBunnyVideoId(lesson?.url);
+    if (!videoId) {
+      return Swal.fire({ icon: 'info', title: 'لا يوجد Bunny Video ID', background: theme.surface, color: theme.text });
+    }
+
+    try {
+      const response = await fetch(`${BUNNY_CONFIG.streamBaseEndpoint}/${videoId}`, {
+        headers: { AccessKey: BUNNY_CONFIG.streamAccessKey },
+      });
+
+      if (!response.ok) {
+        throw new Error(await getBunnyErrorMessage(response, 'تعذر قراءة حالة الفيديو من Bunny.'));
+      }
+
+      const data = await response.json();
+      const rawStatus = data?.status ?? data?.Status;
+      const encodeProgress = data?.encodeProgress ?? data?.EncodeProgress;
+      const nextStatus = Number(encodeProgress) === 100 ? 'ready' : normalizeBunnyStatus(rawStatus);
+
+      await updateDoc(doc(db, "lessons", lesson.id), {
+        bunnyVideoId: videoId,
+        bunnyStatus: nextStatus,
+        bunnyStatusRaw: data?.status ?? data?.Status ?? null,
+        bunnyEncodeProgress: data?.encodeProgress ?? data?.EncodeProgress ?? null,
+        bunnyStatusUpdatedAt: serverTimestamp(),
+      });
+
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: nextStatus === 'ready' ? 'success' : nextStatus === 'failed' ? 'error' : 'info',
+        title: nextStatus === 'ready' ? 'الفيديو جاهز على Bunny' : nextStatus === 'failed' ? 'Bunny فشل في معالجة الفيديو' : 'الفيديو مازال Processing',
+        timer: 2600,
+        showConfirmButton: false,
+        background: theme.surface,
+        color: theme.text,
+      });
+    } catch (error) {
+      Swal.fire({ icon: 'error', title: 'تعذر تحديث حالة Bunny', text: error.message || 'حاول مرة أخرى.', background: theme.surface, color: theme.text });
+    }
+  };
+
+  const notifyLessonStudents = async (lesson) => {
+    const status = normalizeBunnyStatus(lesson?.bunnyStatus);
+    if (lesson?.videoKind === 'bunny' && (lesson?.bunnyVideoId || isBunnyEmbedUrl(lesson?.url || '')) && status !== 'ready') {
+      return Swal.fire({
+        icon: 'info',
+        title: 'الفيديو لسه مش جاهز',
+        text: 'حدّث حالة Bunny الأول، وابعت الإشعار لما الحالة تبقى جاهز.',
+        background: theme.surface,
+        color: theme.text,
+      });
+    }
+
+    const result = await sendPushNotification({
+      title: "محاضرة جديدة",
+      body: `تم رفع فيديو: ${lesson.title}`,
+      year: lesson.year,
+      lessonId: lesson.id,
+      lessonTitle: lesson.title,
+      lesson,
+    });
+
+    await updateDoc(doc(db, "lessons", lesson.id), {
+      notificationSentAt: serverTimestamp(),
+      notificationResult: {
+        sent: result?.sent || 0,
+        failed: result?.failed || 0,
+        message: result?.message || "",
+      },
+    });
+  };
+
   const resetLessonForm = () => {
     setNewLesson({
       title: "",
@@ -891,6 +1092,9 @@ const AdminDashboard = ({
       year: "الفرقة الأولى",
       semester: "الأول",
       videoKind: "bunny",
+      bunnyVideoId: "",
+      bunnyStatus: "",
+      bunnyTitle: "",
       isActive: true,
     });
     setLessonTitle("");
@@ -932,6 +1136,8 @@ const AdminDashboard = ({
       videoKind: 'bunny',
       isActive: newLesson?.isActive !== false,
     };
+    const currentOrder = Number(newLesson?.order);
+    const lessonOrder = Number.isFinite(currentOrder) ? currentOrder : getNextLessonOrder(payload);
 
     const missingFields = [
       !payload.title && "عنوان المحاضرة",
@@ -954,33 +1160,44 @@ const AdminDashboard = ({
       setIsSavingLesson(true);
       try {
         if (editingLessonId) {
-          await updateDoc(doc(db, "lessons", editingLessonId), { ...payload, updatedAt: serverTimestamp() });
+          await updateDoc(doc(db, "lessons", editingLessonId), { ...payload, order: lessonOrder, updatedAt: serverTimestamp() });
           resetLessonForm();
           Swal.fire({ icon: "success", title: "تم تعديل المحاضرة", background: theme.surface, color: theme.text });
         } else {
-          const lessonRef = await addDoc(collection(db, "lessons"), { ...payload, views: 0, createdAt: serverTimestamp() });
+          const lessonRef = await addDoc(collection(db, "lessons"), { ...payload, order: lessonOrder, views: 0, createdAt: serverTimestamp() });
 
           let notificationResult = null;
           let notificationError = null;
-          try {
-            notificationResult = await sendPushNotification({
-              title: "محاضرة جديدة",
-              body: `تم رفع فيديو: ${payload.title}`,
-              year: payload.year,
-              lessonId: lessonRef.id,
-              lessonTitle: payload.title,
-              lesson: {
-                ...payload,
-                id: lessonRef.id,
-              },
-            });
-          } catch (error) {
-            notificationError = error;
-            console.error("Automatic lesson notification failed:", error);
+          const bunnyStatus = normalizeBunnyStatus(payload.bunnyStatus);
+          const shouldDelayNotification = payload.videoKind === 'bunny' && payload.bunnyVideoId && bunnyStatus !== 'ready';
+          if (shouldDelayNotification) {
+            notificationResult = {
+              sent: 0,
+              failed: 0,
+              delayedForBunny: true,
+              message: 'تم حفظ المحاضرة بدون إشعار لأن فيديو Bunny لم يجهز بعد.',
+            };
+          } else {
+            try {
+              notificationResult = await sendPushNotification({
+                title: "محاضرة جديدة",
+                body: `تم رفع فيديو: ${payload.title}`,
+                year: payload.year,
+                lessonId: lessonRef.id,
+                lessonTitle: payload.title,
+                lesson: {
+                  ...payload,
+                  id: lessonRef.id,
+                },
+              });
+            } catch (error) {
+              notificationError = error;
+              console.error("Automatic lesson notification failed:", error);
+            }
           }
           const hasNotificationError = notificationError || notificationResult?.error;
           const hasFailedNotifications = !hasNotificationError && (notificationResult?.failed || 0) > 0;
-          const hasNoNotificationTargets = !hasNotificationError && !hasFailedNotifications && (notificationResult?.sent || 0) === 0;
+          const hasNoNotificationTargets = !notificationResult?.delayedForBunny && !hasNotificationError && !hasFailedNotifications && (notificationResult?.sent || 0) === 0;
           const noNotificationTargetsMessage = notificationResult?.message || buildPushEmptyMessage({
             ...(notificationResult?.stats || {}),
             targetYear: payload.year,
@@ -988,14 +1205,16 @@ const AdminDashboard = ({
 
           resetLessonForm();
           Swal.fire({
-            icon: hasNotificationError || hasFailedNotifications || hasNoNotificationTargets ? "warning" : "success",
-            title: "تم نشر المحاضرة بنجاح",
+            icon: hasNotificationError || hasFailedNotifications || hasNoNotificationTargets || notificationResult?.delayedForBunny ? "warning" : "success",
+            title: notificationResult?.delayedForBunny ? "تم حفظ المحاضرة بدون إشعار" : "تم نشر المحاضرة بنجاح",
             text: hasNotificationError
               ? "تم حفظ المحاضرة، لكن تعذر إرسال الإشعارات الآن. حاول مرة أخرى لاحقاً أو راجع الاتصال."
               : hasFailedNotifications
                 ? (notificationResult?.message || "تم حفظ المحاضرة، لكن فشل إرسال الإشعار لبعض الأجهزة.")
               : hasNoNotificationTargets
                 ? noNotificationTargetsMessage
+              : notificationResult?.delayedForBunny
+                ? "الفيديو لسه Processing على Bunny. حدّث الحالة بعد شوية، وابعت الإشعار لما يبقى جاهز."
               : `تم إرسال الإشعارات مباشرة إلى ${notificationResult?.sent || 0} جهاز${notificationResult?.failed ? `، وفشل ${notificationResult.failed}` : ""}.`,
             background: theme.surface,
             color: theme.text,
@@ -1031,7 +1250,11 @@ const AdminDashboard = ({
       year: lesson.year || "الفرقة الأولى",
       semester: lesson.semester || "الأول",
       videoKind: lesson.videoKind || 'bunny',
+      bunnyVideoId: lesson.bunnyVideoId || extractBunnyVideoId(lesson.url || ""),
+      bunnyStatus: lesson.bunnyStatus || "",
+      bunnyTitle: lesson.bunnyTitle || "",
       isActive: lesson.isActive !== false,
+      order: lesson.order ?? lesson.sortOrder ?? lesson.lessonOrder ?? lesson.sequence ?? "",
     });
     setShowAddLessonForm(true);
     setActiveTab("content");
@@ -1122,6 +1345,9 @@ const AdminDashboard = ({
       year: chapter?.year || selectedContentYear,
       semester: newLesson?.semester || "الأول",
       videoKind: "bunny",
+      bunnyVideoId: "",
+      bunnyStatus: "",
+      bunnyTitle: "",
       isActive: true,
     });
     if (chapter) setSelectedContentChapter(chapter);
@@ -1655,15 +1881,26 @@ const AdminDashboard = ({
   const lessonsWithoutChapter = lessons.filter((lesson) => !lesson.chapterId && !lesson.chapterName).length;
   const selectedFormSubject = subjects.find((subject) => subject.id === newLesson?.subjectId || subject.name === newLesson?.subject);
   const selectedFormChapters = selectedFormSubject ? (chapters[selectedFormSubject.id] || []).filter((chapter) => !newLesson?.year || chapter.year === newLesson.year) : [];
+  const getSubjectYears = (subject = {}) => [
+    subject.year,
+    subject.accessYear,
+    subject.grade,
+    subject.stage,
+    ...(Array.isArray(subject.years) ? subject.years : []),
+    ...(Array.isArray(subject.accessYears) ? subject.accessYears : []),
+  ].filter(Boolean);
+  const subjectBelongsToYear = (subject = {}, year = "") => getSubjectYears(subject).includes(year);
   const subjectsForSelectedContentYear = subjects.filter((subject) => {
     const subjectChapters = chapters[subject.id] || [];
     const subjectLessons = lessons.filter((lesson) => lesson.subjectId === subject.id || lesson.subject === subject.name);
+    const subjectHasSelectedYear = subjectBelongsToYear(subject, selectedContentYear);
     const hasContentInSelectedYear =
       subjectChapters.some((chapter) => chapter.year === selectedContentYear) ||
       subjectLessons.some((lesson) => lesson.year === selectedContentYear);
     const hasAnyContent = subjectChapters.length > 0 || subjectLessons.length > 0;
+    const hasAnySubjectYear = getSubjectYears(subject).length > 0;
 
-    return hasContentInSelectedYear || !hasAnyContent;
+    return subjectHasSelectedYear || hasContentInSelectedYear || (!hasAnyContent && !hasAnySubjectYear);
   });
   const selectedContentSubjectChapters = selectedContentSubject
     ? (chapters[selectedContentSubject.id] || [])
@@ -1690,11 +1927,11 @@ const AdminDashboard = ({
     : selectedContentSubjectChapters;
   const selectedContentChapterLessons = selectedContentChapter
     ? selectedContentChapter?.isLegacy
-      ? selectedContentLegacyLessons
-      : selectedContentSubjectLessons.filter((lesson) =>
+      ? sortLessonsForDisplay(selectedContentLegacyLessons)
+      : sortLessonsForDisplay(selectedContentSubjectLessons.filter((lesson) =>
         lesson.chapterId === selectedContentChapter.id ||
         (lesson.subjectId === selectedContentSubject?.id && lesson.chapterName === selectedContentChapter.name)
-      )
+      ))
     : [];
   const contentStep = !isContentYearOpen
     ? "years"
@@ -2254,34 +2491,78 @@ const AdminDashboard = ({
                       <strong>محتوى {selectedContentChapter.name}</strong>
                       <span>{selectedContentYear} • {selectedContentSubject.name} {selectedContentChapter.notes ? `• ${selectedContentChapter.notes}` : ""}</span>
                     </div>
+                    {selectedContentChapterLessons.length > 1 && (
+                      <div className="drag-helper-note">
+                        <i className="fas fa-grip-vertical"></i>
+                        اسحب كارت الفيديو لتغيير ترتيبه
+                      </div>
+                    )}
                   </div>
                   <div className="chapter-video-list">
-                    {selectedContentChapterLessons.map((lesson) => (
-                      <div key={lesson.id} className="chapter-video-card">
-                        <button className="video-thumb-mini" onClick={() => setPlayingVideoId((current) => current === lesson.id ? null : lesson.id)}>
-                          <i className={`fas ${playingVideoId === lesson.id ? 'fa-pause' : 'fa-play'}`}></i>
-                        </button>
-                        <div>
-                          <strong>{lesson.title}</strong>
-                          <span>{lesson.semester || 'بدون ترم'} {lesson.pdfUrl ? '• PDF' : ''} {lesson.isActive === false ? '• مخفي' : ''}</span>
-                        </div>
-                        <div className="chapter-video-actions">
-                          <button onClick={() => toggleLessonVisibility(lesson.id, lesson.isActive)} className={`btn-action ${lesson.isActive === false ? 'btn-green' : 'btn-orange'}`}>{lesson.isActive === false ? 'إظهار' : 'إخفاء'}</button>
-                          <button onClick={() => handleEditLesson(lesson)} className="btn-action btn-cyan">تعديل</button>
-                          <button onClick={() => setStatsLesson(lesson)} className="btn-action btn-green">إحصائيات</button>
-                          <button onClick={() => handleDeleteLesson(lesson)} className="btn-action btn-red">حذف</button>
-                        </div>
-                        {playingVideoId === lesson.id && lesson.url && (
-                          <div className="chapter-video-player">
-                            {isBunnyEmbedUrl(lesson.url || '') ? (
-                              <iframe src={lesson.url} className="inline-video" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" sandbox="allow-scripts allow-same-origin allow-presentation" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen title={lesson.title}></iframe>
-                            ) : (
-                              <video src={lesson.url} controls controlsList="nodownload noplaybackrate" disablePictureInPicture className="inline-video" onContextMenu={e => e.preventDefault()} />
+                    {selectedContentChapterLessons.map((lesson, index) => {
+                      const bunnyStatusLabel = getBunnyStatusLabel(lesson);
+                      const draggingIndex = selectedContentChapterLessons.findIndex((item) => item.id === draggingLessonId);
+                      const isDragTarget = dragOverLessonId === lesson.id && draggingLessonId !== lesson.id;
+                      const dropDirection = draggingIndex >= 0 && draggingIndex < index ? 'after' : 'before';
+                      return (
+                        <div
+                          key={lesson.id}
+                          className={`chapter-video-card ${draggingLessonId === lesson.id ? 'is-dragging' : ''} ${isDragTarget ? `is-drop-target drop-${dropDirection}` : ''}`}
+                          draggable
+                          onDragStart={(event) => {
+                            setDraggingLessonId(lesson.id);
+                            setDragOverLessonId(null);
+                            event.dataTransfer.effectAllowed = 'move';
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = 'move';
+                            if (dragOverLessonId !== lesson.id) setDragOverLessonId(lesson.id);
+                          }}
+                          onDragLeave={(event) => {
+                            if (!event.currentTarget.contains(event.relatedTarget)) setDragOverLessonId(null);
+                          }}
+                          onDrop={() => handleDropLesson(lesson.id, selectedContentChapterLessons)}
+                          onDragEnd={() => {
+                            setDraggingLessonId(null);
+                            setDragOverLessonId(null);
+                          }}
+                        >
+                          <button className="video-thumb-mini" onClick={() => setPlayingVideoId((current) => current === lesson.id ? null : lesson.id)}>
+                            <i className={`fas ${playingVideoId === lesson.id ? 'fa-pause' : 'fa-play'}`}></i>
+                          </button>
+                          <div>
+                            <strong>{lesson.title}</strong>
+                            <span><b className="order-pill">#{index + 1}</b> {lesson.semester || 'بدون ترم'} {lesson.pdfUrl ? '• PDF' : ''} {lesson.isActive === false ? '• مخفي' : ''}</span>
+                            {bunnyStatusLabel && (
+                              <span className={`bunny-status-badge ${bunnyStatusLabel.className}`}>
+                                <i className={`fas ${bunnyStatusLabel.icon}`}></i> {bunnyStatusLabel.text}
+                              </span>
                             )}
                           </div>
-                        )}
-                      </div>
-                    ))}
+                          <div className="chapter-video-actions">
+                            <button className="icon-btn drag-handle" title="اسحب الكارت لتغيير الترتيب"><i className="fas fa-grip-vertical"></i><span>ترتيب</span></button>
+                            <button className="icon-btn" disabled={index === 0} onClick={() => handleMoveLesson(lesson.id, "up", selectedContentChapterLessons)} title="رفع الفيديو"><i className="fas fa-arrow-up"></i></button>
+                            <button className="icon-btn" disabled={index === selectedContentChapterLessons.length - 1} onClick={() => handleMoveLesson(lesson.id, "down", selectedContentChapterLessons)} title="تنزيل الفيديو"><i className="fas fa-arrow-down"></i></button>
+                            {bunnyStatusLabel && <button onClick={() => refreshBunnyStatus(lesson)} className="btn-action btn-cyan">تحديث Bunny</button>}
+                            {bunnyStatusLabel?.className === 'ready' && <button onClick={() => notifyLessonStudents(lesson)} className="btn-action btn-green">إشعار</button>}
+                            <button onClick={() => toggleLessonVisibility(lesson.id, lesson.isActive)} className={`btn-action ${lesson.isActive === false ? 'btn-green' : 'btn-orange'}`}>{lesson.isActive === false ? 'إظهار' : 'إخفاء'}</button>
+                            <button onClick={() => handleEditLesson(lesson)} className="btn-action btn-cyan">تعديل</button>
+                            <button onClick={() => setStatsLesson(lesson)} className="btn-action btn-green">إحصائيات</button>
+                            <button onClick={() => handleDeleteLesson(lesson)} className="btn-action btn-red">حذف</button>
+                          </div>
+                          {playingVideoId === lesson.id && lesson.url && (
+                            <div className="chapter-video-player">
+                              {isBunnyEmbedUrl(lesson.url || '') ? (
+                                <iframe src={lesson.url} className="inline-video" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" sandbox="allow-scripts allow-same-origin allow-presentation" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen title={lesson.title}></iframe>
+                              ) : (
+                                <video src={lesson.url} controls controlsList="nodownload noplaybackrate" disablePictureInPicture className="inline-video" onContextMenu={e => e.preventDefault()} />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                     {selectedContentChapterLessons.length === 0 && <div className="empty-state">لا يوجد محتوى داخل هذا الشابتر بعد. اضغط إضافة محاضرة.</div>}
                   </div>
                 </div>
@@ -3233,14 +3514,31 @@ const AdminDashboard = ({
         .chapter-videos-head strong, .chapter-videos-head span { display: block; }
         .chapter-videos-head strong { color: ${theme.text}; margin-bottom: 4px; }
         .chapter-videos-head span { color: ${theme.subText}; font-size: 12px; }
+        .drag-helper-note { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 7px 11px; border-radius: 999px; color: ${theme.accent}; background: ${theme.accent}12; border: 1px solid ${theme.accent}33; font-size: 12px; font-weight: 900; }
+        .drag-helper-note i { font-size: 13px; }
         .chapter-video-list { display: grid; gap: 10px; }
-        .chapter-video-card { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 10px; align-items: center; background: ${theme.surfaceAlt}; border: 1.5px solid ${visibleBorder}; border-radius: 14px; padding: 10px; }
+        .chapter-video-card { position: relative; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 10px; align-items: center; background: ${theme.surfaceAlt}; border: 1.5px solid ${visibleBorder}; border-radius: 14px; padding: 10px; transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, opacity 0.18s ease; }
+        .chapter-video-card[draggable="true"] { cursor: grab; }
+        .chapter-video-card:hover { border-color: ${theme.accent}66; box-shadow: ${isLightTheme ? '0 14px 30px rgba(15,23,42,0.08)' : '0 14px 28px rgba(0,0,0,0.18)'}; transform: translateY(-1px); }
+        .chapter-video-card.is-dragging { opacity: 0.5; transform: scale(0.985); border-style: dashed; border-color: ${theme.accent}; box-shadow: none; cursor: grabbing; }
+        .chapter-video-card.is-drop-target { background: linear-gradient(135deg, ${theme.accent}18, ${theme.surfaceAlt}); border-color: ${theme.accent}; box-shadow: 0 16px 34px ${theme.accent}18; }
+        .chapter-video-card.is-drop-target::before { content: ''; position: absolute; left: 14px; right: 14px; height: 4px; border-radius: 999px; background: ${theme.gradient}; box-shadow: 0 0 0 4px ${theme.accent}18; }
+        .chapter-video-card.drop-before::before { top: -8px; }
+        .chapter-video-card.drop-after::before { bottom: -8px; }
         .video-thumb-mini { width: 44px; height: 44px; border-radius: 14px; border: none; background: ${theme.accent}; color: ${theme.buttonText}; display: grid; place-items: center; cursor: pointer; }
         .chapter-video-card strong, .chapter-video-card span { display: block; }
         .chapter-video-card strong { color: ${theme.text}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .chapter-video-card span { color: ${theme.subText}; font-size: 12px; margin-top: 3px; }
+        .order-pill { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; height: 22px; padding: 0 8px; margin-inline-end: 5px; border-radius: 999px; background: ${theme.accent}16; color: ${theme.accent}; border: 1px solid ${theme.accent}33; font-size: 11px; }
+        .bunny-status-badge { width: fit-content; margin-top: 7px; padding: 5px 9px; border-radius: 999px; font-weight: 900; border: 1px solid transparent; }
+        .bunny-status-badge.ready { color: ${theme.success}; background: ${theme.success}18; border-color: ${theme.success}44; }
+        .bunny-status-badge.processing { color: ${warningColor}; background: ${warningColor}18; border-color: ${warningColor}44; }
+        .bunny-status-badge.failed { color: ${theme.danger}; background: ${theme.danger}18; border-color: ${theme.danger}44; }
         .chapter-video-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
         .chapter-video-actions .btn-action { padding: 7px 9px; font-size: 12px; }
+        .drag-handle { width: auto; min-width: 76px; padding-inline: 10px; gap: 7px; cursor: grab; color: ${theme.accent}; border-color: ${theme.accent}44; background: ${theme.accent}12; }
+        .drag-handle span { display: inline; margin: 0; color: inherit; font-size: 11px; font-weight: 900; }
+        .drag-handle:active { cursor: grabbing; transform: scale(0.98); }
         .chapter-video-player { grid-column: 1 / -1; border-radius: 14px; overflow: hidden; background: #000; aspect-ratio: 16 / 9; }
         .lesson-form-overlay { background: ${isLightTheme ? 'rgba(15,23,42,0.36)' : 'rgba(0,0,0,0.62)'}; backdrop-filter: blur(4px); }
         .lesson-form-modal { position: relative; width: min(92vw, 1180px); max-height: min(780px, calc(100vh - 48px)); overflow-y: auto; background: ${theme.surface}; color: ${theme.text}; border: 1.5px solid ${visibleBorder}; border-radius: 22px; padding: 34px 38px 24px; box-shadow: ${isLightTheme ? '0 28px 80px rgba(15,23,42,0.22)' : '0 28px 90px rgba(0,0,0,0.54)'}; direction: rtl; }

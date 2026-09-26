@@ -39,6 +39,38 @@ const StudentPlatform = ({ user, setUser, lessons, announcement, theme, themeMod
       .replace(/\s+/g, ' ')
       .trim();
 
+  const timestampToMillis = (value) => {
+    if (!value) return 0;
+    if (typeof value?.toMillis === 'function') return value.toMillis();
+    if (typeof value?.toDate === 'function') return value.toDate().getTime();
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === 'number') return value;
+
+    const parsed = Date.parse(String(value));
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const lessonPublishedTime = (lesson = {}) => Math.max(
+    timestampToMillis(lesson.createdAt),
+    timestampToMillis(lesson.uploadedAt),
+    timestampToMillis(lesson.publishedAt),
+    timestampToMillis(lesson.updatedAt),
+    timestampToMillis(lesson.date)
+  );
+
+  const lessonManualOrder = (lesson = {}) => {
+    const order = Number(lesson.order ?? lesson.sortOrder ?? lesson.lessonOrder ?? lesson.sequence);
+    return Number.isFinite(order) ? order : Number.POSITIVE_INFINITY;
+  };
+
+  const sortLessonsByNewest = (items = []) => [...items].sort((a, b) => {
+    const orderDiff = lessonManualOrder(a) - lessonManualOrder(b);
+    if (orderDiff) return orderDiff;
+    const timeDiff = lessonPublishedTime(b) - lessonPublishedTime(a);
+    if (timeDiff) return timeDiff;
+    return String(a.title || '').localeCompare(String(b.title || ''), 'ar');
+  });
+
   // --- نظام المراقبة وحماية التصوير ---
   useEffect(() => {
     const handleDetection = async () => {
@@ -215,9 +247,9 @@ const StudentPlatform = ({ user, setUser, lessons, announcement, theme, themeMod
   );
   const accessYearKeys = new Set(accessYears.map((year) => normalizeYear(year)));
   const activeAccessYear = accessYears[0] || studentDetails?.year;
-  const studentLessons = lessons.filter(
+  const studentLessons = sortLessonsByNewest(lessons.filter(
     (lesson) => accessYearKeys.has(normalizeYear(lesson.year)) && lesson.isActive !== false
-  );
+  ));
   const chaptersBySubject = (() => {
     const grouped = {};
     chapters.forEach((chapter) => {
@@ -231,8 +263,8 @@ const StudentPlatform = ({ user, setUser, lessons, announcement, theme, themeMod
     });
     return grouped;
   })();
-  const pdfLessons = studentLessons.filter((lesson) => lesson.pdfUrl);
-  const latestLessons = [...studentLessons].slice(0, 5);
+  const pdfLessons = sortLessonsByNewest(studentLessons.filter((lesson) => lesson.pdfUrl));
+  const latestLessons = studentLessons.slice(0, 5);
 
   if (loading) return <div className="loader-container"><div className="gold-loader"></div></div>;
 
@@ -389,7 +421,7 @@ const StudentPlatform = ({ user, setUser, lessons, announcement, theme, themeMod
                   <div className="fade-in">
                     <button className="btn-back" onClick={() => { setSelectedSubject(null); setSelectedChapter(null); }}><i className="fas fa-chevron-right"></i> عودة لكل المواد</button>
                     {(() => {
-                      const subjectLessons = studentLessons.filter(l => l.semester === (activeTab === 'sem1' ? 'الأول' : 'الثاني') && l.subject === selectedSubject && l.isActive);
+                      const subjectLessons = sortLessonsByNewest(studentLessons.filter(l => l.semester === (activeTab === 'sem1' ? 'الأول' : 'الثاني') && l.subject === selectedSubject && l.isActive));
                       const subjectId = subjectLessons.find((lesson) => lesson.subjectId)?.subjectId;
                       const subjectChapters = [
                         ...(subjectId ? (chaptersBySubject[subjectId] || []) : []),
@@ -408,7 +440,7 @@ const StudentPlatform = ({ user, setUser, lessons, announcement, theme, themeMod
                       );
                     })()}
                     <div className="lectures-grid">
-                      {studentLessons.filter(l => l.semester === (activeTab === 'sem1' ? 'الأول' : 'الثاني') && l.subject === selectedSubject && l.isActive && (!selectedChapter || l.chapterId === selectedChapter.id || l.chapterName === selectedChapter.name)).map(lesson => (
+                      {sortLessonsByNewest(studentLessons.filter(l => l.semester === (activeTab === 'sem1' ? 'الأول' : 'الثاني') && l.subject === selectedSubject && l.isActive && (!selectedChapter || l.chapterId === selectedChapter.id || l.chapterName === selectedChapter.name))).map(lesson => (
                           <div key={lesson.id} className="lecture-card">
                             <div className="thumb-container" onClick={() => handleWatchVideo(lesson)}>
                                <img src={lesson.thumbnail || "https://img.freepik.com/free-vector/abstract-gold-background_23-2148390518.jpg"} alt="" />

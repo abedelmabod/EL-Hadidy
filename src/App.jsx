@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
-import { collection, onSnapshot, doc } from "firebase/firestore";
+import { collection, onSnapshot, doc, query, orderBy, limit } from "firebase/firestore";
 import AdminDashboard from './AdminDashboard';
 import StudentPlatform from './StudentPlatform'; 
 import Login from './Login';
@@ -62,26 +62,39 @@ function App() {
   }, [user]);
 
   useEffect(() => {
-    const unsubS = subscribeToLiveCollection(db, "students", {
-      onData: setStudentsDB,
-    });
-    const unsubL = subscribeToLiveCollection(db, "lessons", {
-      onData: setLessons,
-    });
-    const unsubC = onSnapshot(collection(db, "codes"), (s) => setCodesDB(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubSub = onSnapshot(collection(db, "subjects"), (s) => setSubjects(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubSupportRequests = onSnapshot(collection(db, "supportRequests"), (s) => {
-      const requestsData = s.docs.map(d => ({ id: d.id, ...d.data() }));
-      setSupportRequests(requestsData.sort((a, b) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0)));
-    });
-    const unsubLogs = onSnapshot(collection(db, "logs"), (s) => {
-       const logsData = s.docs.map(d => ({ id: d.id, ...d.data() }));
-       setLogsDB(logsData.sort((a, b) => b.time?.toDate() - a.time?.toDate())); // ترتيب تنازلي
-    });
-    const unsubA = onSnapshot(doc(db, "settings", "global"), (d) => d.exists() && setAnnouncement(d.data().text));
-    
-    return () => { unsubS(); unsubL(); unsubC(); unsubSub(); unsubSupportRequests(); unsubLogs(); unsubA(); };
-  }, []);
+    if (!user) return undefined;
+
+    const unsubscribers = [
+      subscribeToLiveCollection(db, "lessons", {
+        onData: setLessons,
+      }),
+      onSnapshot(doc(db, "settings", "global"), (d) => d.exists() && setAnnouncement(d.data().text)),
+    ];
+
+    if (user.role === 'admin') {
+      unsubscribers.push(
+        subscribeToLiveCollection(db, "students", {
+          onData: setStudentsDB,
+        }),
+        onSnapshot(collection(db, "codes"), (s) => setCodesDB(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+        onSnapshot(collection(db, "subjects"), (s) => setSubjects(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+        onSnapshot(query(collection(db, "supportRequests"), orderBy("createdAt", "desc"), limit(120)), (s) => {
+          setSupportRequests(s.docs.map(d => ({ id: d.id, ...d.data() })));
+        }),
+        onSnapshot(query(collection(db, "logs"), orderBy("time", "desc"), limit(300)), (s) => {
+          setLogsDB(s.docs.map(d => ({ id: d.id, ...d.data() })));
+        })
+      );
+    } else if (user.role === 'support') {
+      unsubscribers.push(
+        onSnapshot(query(collection(db, "supportRequests"), orderBy("createdAt", "desc"), limit(120)), (s) => {
+          setSupportRequests(s.docs.map(d => ({ id: d.id, ...d.data() })));
+        })
+      );
+    }
+
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe?.());
+  }, [user?.id, user?.role]);
 
   const toggleTheme = () => {
     setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'));
