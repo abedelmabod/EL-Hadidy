@@ -1886,10 +1886,8 @@ const AdminDashboard = ({
     const hasContentInSelectedYear =
       subjectChapters.some((chapter) => isSameYear(chapter.year, selectedContentYear)) ||
       subjectLessons.some((lesson) => isSameYear(lesson.year, selectedContentYear));
-    const hasAnyContent = subjectChapters.length > 0 || subjectLessons.length > 0;
-    const hasAnySubjectYear = getSubjectYears(subject).length > 0;
 
-    return subjectHasSelectedYear || hasContentInSelectedYear || (!hasAnyContent && !hasAnySubjectYear);
+    return subjectHasSelectedYear || hasContentInSelectedYear;
   });
   const selectedContentSubjectChapters = selectedContentSubject
     ? (chapters[selectedContentSubject.id] || [])
