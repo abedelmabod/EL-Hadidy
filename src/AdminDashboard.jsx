@@ -23,6 +23,7 @@ const AdminDashboard = ({
   const [newSubjectImage, setNewSubjectImage] = useState("");
   const [playingVideoId, setPlayingVideoId] = useState(null);
   const [chapters, setChapters] = useState({});
+  const [isChaptersLoaded, setIsChaptersLoaded] = useState(false);
   const [expandedSubject, setExpandedSubject] = useState(null);
   const [showAddChapterFor, setShowAddChapterFor] = useState(null);
   const [newChapter, setNewChapter] = useState({ name: "", notes: "", year: "الفرقة الأولى" });
@@ -31,6 +32,7 @@ const AdminDashboard = ({
   const [editingLessonId, setEditingLessonId] = useState(null);
   const [showAddLessonForm, setShowAddLessonForm] = useState(false);
   const [selectedContentYear, setSelectedContentYear] = useState("الفرقة الأولى");
+  const [selectedContentStageGroup, setSelectedContentStageGroup] = useState(null);
   const [isContentYearOpen, setIsContentYearOpen] = useState(false);
   const [selectedContentSubject, setSelectedContentSubject] = useState(null);
   const [selectedContentChapter, setSelectedContentChapter] = useState(null);
@@ -64,11 +66,13 @@ const AdminDashboard = ({
 
   const stageGroups = [
     {
-      label: "طلاب الكليات",
+      key: "college",
+      label: "المرحلة الجامعية",
       options: ["الفرقة الأولى", "الفرقة الثانية", "الفرقة الثالثة", "الفرقة الرابعة"],
     },
     {
-      label: "طلاب الثانوية العامة",
+      key: "secondary",
+      label: "الصف الثانوي",
       options: ["الصف الأول الثانوي", "الصف الثاني الثانوي", "الصف الثالث الثانوي"],
     },
   ];
@@ -77,7 +81,6 @@ const AdminDashboard = ({
   const isLightTheme = theme?.mode === 'light';
   const visibleBorder = isLightTheme ? '#CBD5E1' : theme.borderSoft;
   const strongBorder = isLightTheme ? '#B6C2D2' : theme.borderSoft;
-  const warningColor = theme.warning || theme.accentAlt || theme.accent;
 
   useEffect(() => { setLessonTitle(newLesson?.title || ""); }, [newLesson?.title]);
 
@@ -119,6 +122,7 @@ const AdminDashboard = ({
         grouped[subjectId].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
       });
       setChapters(grouped);
+      setIsChaptersLoaded(true);
     });
     return unsubscribe;
   }, []);
@@ -283,7 +287,7 @@ const AdminDashboard = ({
 
   const getNextLessonOrder = (payload) => {
     const scopedLessons = lessons.filter((lesson) => {
-      const sameYear = lesson.year === payload.year;
+      const sameYear = isSameYear(lesson.year, payload.year);
       const sameSemester = lesson.semester === payload.semester;
       const sameSubject = lesson.subjectId
         ? lesson.subjectId === payload.subjectId
@@ -441,6 +445,49 @@ const AdminDashboard = ({
     .replace(/\s+/g, ' ')
     .trim();
 
+  const yearAliases = [
+    ["الصف الأول الثانوي", "الاول الثانوي", "اولى ثانوي", "اولي ثانوي", "اول ثانوي", "1 ثانوي"],
+    ["الصف الثاني الثانوي", "الثاني الثانوي", "تانية ثانوي", "تانيه ثانوي", "ثاني ثانوي", "2 ثانوي"],
+    ["الصف الثالث الثانوي", "الثالث الثانوي", "تالتة ثانوي", "تالته ثانوي", "ثالث ثانوي", "3 ثانوي"],
+    ["الفرقة الأولى", "الفرقه الاولى", "الاولى", "اولي", "اولى"],
+    ["الفرقة الثانية", "الفرقه الثانيه", "الثانية", "الثانيه", "تانية", "تانيه"],
+    ["الفرقة الثالثة", "الفرقه الثالثه", "الثالثة", "الثالثه", "تالتة", "تالته"],
+    ["الفرقة الرابعة", "الفرقه الرابعه", "الرابعة", "الرابعه", "رابعة", "رابعه"],
+  ];
+
+  const yearAliasMap = yearAliases.reduce((map, aliases) => {
+    const canonical = normalizeYearValue(aliases[0]);
+    aliases.forEach((alias) => {
+      map.set(normalizeYearValue(alias), canonical);
+      map.set(normalizeYearValue(`الصف ${alias}`), canonical);
+    });
+    return map;
+  }, new Map());
+
+  const getCanonicalYearKey = (value) => {
+    const normalized = normalizeYearValue(value);
+    if (!normalized) return "";
+    const withoutGradePrefix = normalized.replace(/^الصف\s+/, "");
+    const withoutGroupPrefix = normalized.replace(/^الفرقه\s+/, "");
+
+    return yearAliasMap.get(normalized)
+      || yearAliasMap.get(withoutGradePrefix)
+      || yearAliasMap.get(withoutGroupPrefix)
+      || normalized;
+  };
+
+  const isSameYear = (first, second) => {
+    const firstKey = getCanonicalYearKey(first);
+    const secondKey = getCanonicalYearKey(second);
+    return Boolean(firstKey && secondKey && firstKey === secondKey);
+  };
+
+  const hasMatchingYear = (values = [], year) => values.some((value) => isSameYear(value, year));
+
+  const getStageGroupForYear = (year) => stageGroups.find((group) =>
+    group.options.some((option) => isSameYear(option, year))
+  ) || null;
+
   const getStudentYearValues = (student = {}) => {
     const values = [
       student.year,
@@ -489,7 +536,7 @@ const AdminDashboard = ({
     const tokens = [];
     Array.from(studentsById.values()).forEach((student) => {
       const studentYears = getStudentYearValues(student);
-      if (!studentYears.includes(normalizedYearKey)) return;
+      if (!studentYears.some((year) => getCanonicalYearKey(year) === getCanonicalYearKey(normalizedYearKey))) return;
 
       stats.matchedStudents += 1;
 
@@ -997,88 +1044,6 @@ const AdminDashboard = ({
     return value || 'processing';
   };
 
-  const getBunnyStatusLabel = (lesson = {}) => {
-    const status = normalizeBunnyStatus(lesson.bunnyStatus ?? lesson.status);
-    if (!isBunnyEmbedUrl(lesson.url || '') && lesson.videoKind !== 'bunny') return null;
-    if (status === 'ready') return { text: 'Bunny جاهز', className: 'ready', icon: 'fa-check-circle' };
-    if (status === 'failed') return { text: 'Bunny فشل', className: 'failed', icon: 'fa-times-circle' };
-    return { text: 'Bunny processing', className: 'processing', icon: 'fa-clock' };
-  };
-
-  const refreshBunnyStatus = async (lesson) => {
-    const videoId = lesson?.bunnyVideoId || extractBunnyVideoId(lesson?.url);
-    if (!videoId) {
-      return Swal.fire({ icon: 'info', title: 'لا يوجد Bunny Video ID', background: theme.surface, color: theme.text });
-    }
-
-    try {
-      const response = await fetch(`${BUNNY_CONFIG.streamBaseEndpoint}/${videoId}`, {
-        headers: { AccessKey: BUNNY_CONFIG.streamAccessKey },
-      });
-
-      if (!response.ok) {
-        throw new Error(await getBunnyErrorMessage(response, 'تعذر قراءة حالة الفيديو من Bunny.'));
-      }
-
-      const data = await response.json();
-      const rawStatus = data?.status ?? data?.Status;
-      const encodeProgress = data?.encodeProgress ?? data?.EncodeProgress;
-      const nextStatus = Number(encodeProgress) === 100 ? 'ready' : normalizeBunnyStatus(rawStatus);
-
-      await updateDoc(doc(db, "lessons", lesson.id), {
-        bunnyVideoId: videoId,
-        bunnyStatus: nextStatus,
-        bunnyStatusRaw: data?.status ?? data?.Status ?? null,
-        bunnyEncodeProgress: data?.encodeProgress ?? data?.EncodeProgress ?? null,
-        bunnyStatusUpdatedAt: serverTimestamp(),
-      });
-
-      Swal.fire({
-        toast: true,
-        position: 'top-end',
-        icon: nextStatus === 'ready' ? 'success' : nextStatus === 'failed' ? 'error' : 'info',
-        title: nextStatus === 'ready' ? 'الفيديو جاهز على Bunny' : nextStatus === 'failed' ? 'Bunny فشل في معالجة الفيديو' : 'الفيديو مازال Processing',
-        timer: 2600,
-        showConfirmButton: false,
-        background: theme.surface,
-        color: theme.text,
-      });
-    } catch (error) {
-      Swal.fire({ icon: 'error', title: 'تعذر تحديث حالة Bunny', text: error.message || 'حاول مرة أخرى.', background: theme.surface, color: theme.text });
-    }
-  };
-
-  const notifyLessonStudents = async (lesson) => {
-    const status = normalizeBunnyStatus(lesson?.bunnyStatus);
-    if (lesson?.videoKind === 'bunny' && (lesson?.bunnyVideoId || isBunnyEmbedUrl(lesson?.url || '')) && status !== 'ready') {
-      return Swal.fire({
-        icon: 'info',
-        title: 'الفيديو لسه مش جاهز',
-        text: 'حدّث حالة Bunny الأول، وابعت الإشعار لما الحالة تبقى جاهز.',
-        background: theme.surface,
-        color: theme.text,
-      });
-    }
-
-    const result = await sendPushNotification({
-      title: "محاضرة جديدة",
-      body: `تم رفع فيديو: ${lesson.title}`,
-      year: lesson.year,
-      lessonId: lesson.id,
-      lessonTitle: lesson.title,
-      lesson,
-    });
-
-    await updateDoc(doc(db, "lessons", lesson.id), {
-      notificationSentAt: serverTimestamp(),
-      notificationResult: {
-        sent: result?.sent || 0,
-        failed: result?.failed || 0,
-        message: result?.message || "",
-      },
-    });
-  };
-
   const resetLessonForm = () => {
     setNewLesson({
       title: "",
@@ -1261,6 +1226,7 @@ const AdminDashboard = ({
     if (lesson.year) {
       setSelectedContentYear(lesson.year);
       setLessonYearFilter(lesson.year);
+      setSelectedContentStageGroup(getStageGroupForYear(lesson.year)?.key || null);
     }
     const lessonSubject = subjects.find((subject) => subject.id === lesson.subjectId || subject.name === lesson.subject);
     if (lessonSubject) setSelectedContentSubject(lessonSubject);
@@ -1271,6 +1237,7 @@ const AdminDashboard = ({
 
   const openYearContent = (year) => {
     setSelectedContentYear(year);
+    setSelectedContentStageGroup(getStageGroupForYear(year)?.key || selectedContentStageGroup);
     setCourseYearFilter(year);
     setLessonYearFilter(year);
     setLessonSubjectFilterId(null);
@@ -1279,6 +1246,26 @@ const AdminDashboard = ({
     setSelectedContentChapter(null);
     setShowAddLessonForm(false);
     setIsContentYearOpen(true);
+  };
+
+  const openContentStageGroup = (groupKey) => {
+    setSelectedContentStageGroup(groupKey);
+    setIsContentYearOpen(false);
+    setSelectedContentSubject(null);
+    setSelectedContentChapter(null);
+    setShowAddChapterFor(null);
+    setShowAddLessonForm(false);
+    setEditingChapter(null);
+  };
+
+  const backToContentStages = () => {
+    setSelectedContentStageGroup(null);
+    setIsContentYearOpen(false);
+    setSelectedContentSubject(null);
+    setSelectedContentChapter(null);
+    setShowAddChapterFor(null);
+    setShowAddLessonForm(false);
+    setEditingChapter(null);
   };
 
   const openSubjectContent = (subject) => {
@@ -1321,6 +1308,7 @@ const AdminDashboard = ({
   };
 
   const closeSubjectContent = () => {
+    setSelectedContentStageGroup(null);
     setIsContentYearOpen(false);
     setSelectedContentSubject(null);
     setSelectedContentChapter(null);
@@ -1599,7 +1587,7 @@ const AdminDashboard = ({
 
   const exportCodesToPdf = () => {
     const codesForPdf = (codesDB || []).filter((code) => {
-      const matchesYear = codesYearFilter === "الكل" || code.year === codesYearFilter;
+      const matchesYear = codesYearFilter === "الكل" || isSameYear(code.year, codesYearFilter);
       const codeStatus = getCodeStatus(code);
       const matchesStatus = statusFilter === "all" || statusFilter === codeStatus;
       return matchesYear && matchesStatus;
@@ -1694,26 +1682,26 @@ const AdminDashboard = ({
   const securityAlerts = logsDB.filter((log) => log.alertType === 'security' || log.action?.includes('حظر') || log.action?.includes('تصفير'));
   const lessonSubjectsForYear = subjects.filter((subject) => {
     const subjectChapters = chapters[subject.id] || [];
-    const hasChapterInYear = lessonYearFilter === "الكل" || subjectChapters.some((chapter) => chapter.year === lessonYearFilter);
+    const hasChapterInYear = lessonYearFilter === "الكل" || subjectChapters.some((chapter) => isSameYear(chapter.year, lessonYearFilter));
     const hasLessonInYear = lessons?.some((lesson) => {
       const matchesSubject = lesson.subjectId === subject.id || lesson.subject === subject.name;
-      const matchesYear = lessonYearFilter === "الكل" || lesson.year === lessonYearFilter;
+      const matchesYear = lessonYearFilter === "الكل" || isSameYear(lesson.year, lessonYearFilter);
       return matchesSubject && matchesYear;
     });
     return hasChapterInYear || hasLessonInYear;
   });
   const selectedLessonSubject = subjects.find((subject) => subject.id === lessonSubjectFilterId);
   const lessonChaptersForSubject = lessonSubjectFilterId
-    ? (chapters[lessonSubjectFilterId] || []).filter((chapter) => lessonYearFilter === "الكل" || chapter.year === lessonYearFilter)
+    ? (chapters[lessonSubjectFilterId] || []).filter((chapter) => lessonYearFilter === "الكل" || isSameYear(chapter.year, lessonYearFilter))
     : [];
   const filteredLessons = lessons?.filter((lesson) => {
-    const matchesYear = lessonYearFilter === "الكل" || lesson.year === lessonYearFilter;
+    const matchesYear = lessonYearFilter === "الكل" || isSameYear(lesson.year, lessonYearFilter);
     const matchesSubject = !lessonSubjectFilterId || lesson.subjectId === lessonSubjectFilterId || lesson.subject === selectedLessonSubject?.name;
     const matchesChapter = !chapterFilterId || lesson.chapterId === chapterFilterId;
     return matchesYear && matchesSubject && matchesChapter;
   }) || [];
   const visibleCodes = codesDB?.filter((code) => {
-    const matchesYear = codesYearFilter === "الكل" || code.year === codesYearFilter;
+    const matchesYear = codesYearFilter === "الكل" || isSameYear(code.year, codesYearFilter);
     const codeStatus = getCodeStatus(code);
     const matchesStatus = statusFilter === "all" || statusFilter === codeStatus;
     return matchesYear && matchesStatus;
@@ -1729,7 +1717,7 @@ const AdminDashboard = ({
       student.accessYear,
       ...(Array.isArray(student.accessYears) ? student.accessYears : []),
     ].filter(Boolean);
-    const matchesYear = studentYearFilter === "الكل" || studentYears.includes(studentYearFilter);
+    const matchesYear = studentYearFilter === "الكل" || hasMatchingYear(studentYears, studentYearFilter);
     const matchesStatus =
       studentStatusFilter === "all" ||
       (studentStatusFilter === "subscribed" && student.isSubscribed && !student.isBanned) ||
@@ -1760,11 +1748,12 @@ const AdminDashboard = ({
   const selectedStudentLessons = selectedStudentProfile
     ? lessons.filter((lesson) => {
       const studentYear = selectedStudentProfile.accessYear || selectedStudentProfile.codeYear || selectedStudentProfile.year;
-      return lesson.isActive !== false && (!studentYear || lesson.year === studentYear);
+      return lesson.isActive !== false && (!studentYear || isSameYear(lesson.year, studentYear));
     })
     : [];
   const openContentManager = () => {
     setActiveTab("content");
+    backToContentStages();
   };
   const openLessonComposer = () => {
     setActiveTab("content");
@@ -1880,7 +1869,7 @@ const AdminDashboard = ({
     .sort((a, b) => b.count - a.count)[0];
   const lessonsWithoutChapter = lessons.filter((lesson) => !lesson.chapterId && !lesson.chapterName).length;
   const selectedFormSubject = subjects.find((subject) => subject.id === newLesson?.subjectId || subject.name === newLesson?.subject);
-  const selectedFormChapters = selectedFormSubject ? (chapters[selectedFormSubject.id] || []).filter((chapter) => !newLesson?.year || chapter.year === newLesson.year) : [];
+  const selectedFormChapters = selectedFormSubject ? (chapters[selectedFormSubject.id] || []).filter((chapter) => !newLesson?.year || isSameYear(chapter.year, newLesson.year)) : [];
   const getSubjectYears = (subject = {}) => [
     subject.year,
     subject.accessYear,
@@ -1889,14 +1878,14 @@ const AdminDashboard = ({
     ...(Array.isArray(subject.years) ? subject.years : []),
     ...(Array.isArray(subject.accessYears) ? subject.accessYears : []),
   ].filter(Boolean);
-  const subjectBelongsToYear = (subject = {}, year = "") => getSubjectYears(subject).includes(year);
+  const subjectBelongsToYear = (subject = {}, year = "") => hasMatchingYear(getSubjectYears(subject), year);
   const subjectsForSelectedContentYear = subjects.filter((subject) => {
     const subjectChapters = chapters[subject.id] || [];
     const subjectLessons = lessons.filter((lesson) => lesson.subjectId === subject.id || lesson.subject === subject.name);
     const subjectHasSelectedYear = subjectBelongsToYear(subject, selectedContentYear);
     const hasContentInSelectedYear =
-      subjectChapters.some((chapter) => chapter.year === selectedContentYear) ||
-      subjectLessons.some((lesson) => lesson.year === selectedContentYear);
+      subjectChapters.some((chapter) => isSameYear(chapter.year, selectedContentYear)) ||
+      subjectLessons.some((lesson) => isSameYear(lesson.year, selectedContentYear));
     const hasAnyContent = subjectChapters.length > 0 || subjectLessons.length > 0;
     const hasAnySubjectYear = getSubjectYears(subject).length > 0;
 
@@ -1904,13 +1893,13 @@ const AdminDashboard = ({
   });
   const selectedContentSubjectChapters = selectedContentSubject
     ? (chapters[selectedContentSubject.id] || [])
-      .filter((chapter) => chapter.year === selectedContentYear)
+      .filter((chapter) => isSameYear(chapter.year, selectedContentYear))
       .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
     : [];
   const selectedContentSubjectLessons = selectedContentSubject
     ? lessons.filter((lesson) => {
       const matchesSubject = lesson.subjectId === selectedContentSubject.id || lesson.subject === selectedContentSubject.name;
-      return matchesSubject && lesson.year === selectedContentYear;
+      return matchesSubject && isSameYear(lesson.year, selectedContentYear);
     })
     : [];
   const selectedContentLegacyLessons = selectedContentSubjectLessons.filter((lesson) => !lesson.chapterId && !lesson.chapterName);
@@ -1933,7 +1922,12 @@ const AdminDashboard = ({
         (lesson.subjectId === selectedContentSubject?.id && lesson.chapterName === selectedContentChapter.name)
       ))
     : [];
-  const contentStep = !isContentYearOpen
+  const selectedContentStage = stageGroups.find((group) => group.key === selectedContentStageGroup) || null;
+  const contentYearOptions = selectedContentStage?.options || yearOptions;
+  const isContentLoading = activeTab === "content" && !isChaptersLoaded;
+  const contentStep = !selectedContentStage
+    ? "stage-groups"
+    : !isContentYearOpen
     ? "years"
     : selectedContentChapter
       ? "lessons"
@@ -2019,6 +2013,13 @@ const AdminDashboard = ({
     setAiInput("");
   };
 
+  const handleNavTabClick = (tabId) => {
+    setActiveTab(tabId);
+    if (tabId === "content") {
+      backToContentStages();
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', direction: 'rtl', minHeight: '100vh', background: theme.bg, color: theme.text, fontFamily: 'Cairo, sans-serif' }}>
       
@@ -2065,7 +2066,7 @@ const AdminDashboard = ({
         )}
         <nav className="custom-scrollbar" style={{ display: 'flex', flexDirection: isMobile ? 'row' : 'column', flex: 1, padding: isMobile ? '0 5px' : '15px', justifyContent: isMobile ? 'space-between' : 'flex-start', alignItems: 'center', gap: isMobile ? '0' : '8px', overflowX: isMobile ? 'auto' : 'hidden' }}>
           {navItems.map(item => (
-            <button key={item.id} onClick={() => setActiveTab(item.id)} className={`nav-btn ${activeTab === item.id ? 'active' : ''}`} style={{ width: isMobile ? 'auto' : '100%', padding: isMobile ? '10px 12px' : '14px 20px', flexShrink: 0 }}>
+            <button key={item.id} onClick={() => handleNavTabClick(item.id)} className={`nav-btn ${activeTab === item.id ? 'active' : ''}`} style={{ width: isMobile ? 'auto' : '100%', padding: isMobile ? '10px 12px' : '14px 20px', flexShrink: 0 }}>
               <span className="nav-icon-box"><i className={`fas ${item.icon}`} style={{ fontSize: isMobile ? '20px' : '16px', color: item.id === 'logs' ? theme.danger : 'inherit' }}></i></span>
               {(!isSidebarCollapsed || isMobile) && <span style={{ fontSize: isMobile ? '10px' : '14px', marginTop: isMobile ? '4px' : '0' }}>{item.label}</span>}
               {item.badge > 0 && <span className="nav-badge">{item.badge}</span>}
@@ -2332,42 +2333,92 @@ const AdminDashboard = ({
               <div className="content-panel-head">
                 <div>
                   <strong>
-                {contentStep === "years" && "اختار المرحلة"}
+                    {contentStep === "stage-groups" && "اختار نوع المرحلة"}
+                    {contentStep === "years" && `اختار ${selectedContentStage?.key === "college" ? "الفرقة" : "الصف"}`}
                     {contentStep === "subjects" && `مواد ${selectedContentYear}`}
                     {contentStep === "chapters" && `${selectedContentSubject?.name} - ${selectedContentYear}`}
                     {contentStep === "lessons" && `${selectedContentChapter?.name} - ${selectedContentSubject?.name}`}
                   </strong>
                   <span>
-                {contentStep === "years" && "اضغط على المرحلة لفتح شاشة المواد الخاصة بها."}
+                    {contentStep === "stage-groups" && "ابدأ باختيار المرحلة الجامعية أو الصف الثانوي."}
+                    {contentStep === "years" && "اضغط على الفرقة أو الصف لفتح شاشة المواد الخاصة بها."}
                     {contentStep === "subjects" && "اضغط على المادة لفتح شاشة الشباتر الخاصة بها."}
                     {contentStep === "chapters" && "اختار الشابتر لعرض محتواه أو أضف شابتر جديد."}
                     {contentStep === "lessons" && "راجع محاضرات وملفات الشابتر، وعدل أو أخف المحتوى بسرعة."}
                   </span>
                 </div>
                 <div className="content-flow-actions">
-                  {contentStep !== "years" && <button className="btn-secondary" onClick={contentStep === "subjects" ? backToContentYears : contentStep === "chapters" ? backToContentSubjects : backToContentChapters}><i className="fas fa-arrow-right"></i> رجوع</button>}
+                  {contentStep !== "stage-groups" && <button className="btn-secondary" onClick={contentStep === "years" ? backToContentStages : contentStep === "subjects" ? backToContentYears : contentStep === "chapters" ? backToContentSubjects : backToContentChapters}><i className="fas fa-arrow-right"></i> رجوع</button>}
                   {contentStep === "lessons" && selectedContentSubject && selectedContentChapter && !selectedContentChapter.isLegacy && <button className="btn-primary" onClick={() => prepareLessonForChapter(selectedContentSubject, selectedContentChapter)}><i className="fas fa-plus"></i> إضافة محاضرة</button>}
                 </div>
               </div>
 
               <div className="content-breadcrumbs">
-              <button className={contentStep === "years" ? "active" : ""} onClick={backToContentYears}>المراحل</button>
+                <button className={contentStep === "stage-groups" ? "active" : ""} onClick={backToContentStages}>المراحل</button>
+                {selectedContentStage && <button className={contentStep === "years" ? "active" : ""} onClick={backToContentYears}>{selectedContentStage.label}</button>}
                 {isContentYearOpen && <button className={contentStep === "subjects" ? "active" : ""} onClick={backToContentSubjects}>{selectedContentYear}</button>}
                 {selectedContentSubject && <button className={contentStep === "chapters" ? "active" : ""} onClick={backToContentChapters}>{selectedContentSubject.name}</button>}
                 {selectedContentChapter && <button className="active">{selectedContentChapter.name}</button>}
               </div>
 
-              {contentStep === "years" && (
+              {isContentLoading && (
+                <div className="content-skeleton-grid">
+                  {[1, 2, 3, 4].map((item) => (
+                    <div className="content-skeleton-card" key={item}>
+                      <span></span>
+                      <strong></strong>
+                      <small></small>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!isContentLoading && contentStep === "stage-groups" && (
+                <div className="content-year-grid content-stage-grid">
+                  {stageGroups.map((group) => {
+                    const groupYears = group.options;
+                    const groupSubjectsCount = subjects.filter((subject) => {
+                      const subjectChapters = chapters[subject.id] || [];
+                      const subjectLessons = lessons.filter((lesson) => lesson.subjectId === subject.id || lesson.subject === subject.name);
+                      return groupYears.some((year) =>
+                        subjectBelongsToYear(subject, year) ||
+                        subjectChapters.some((chapter) => isSameYear(chapter.year, year)) ||
+                        subjectLessons.some((lesson) => isSameYear(lesson.year, year))
+                      );
+                    }).length;
+                    const groupChaptersCount = Object.values(chapters).flat().filter((chapter) => groupYears.some((year) => isSameYear(chapter.year, year))).length;
+                    const groupLessonsCount = lessons.filter((lesson) => groupYears.some((year) => isSameYear(lesson.year, year))).length;
+
+                    return (
+                      <button key={group.key} type="button" className="year-card stage-choice-card flow-card" onClick={() => openContentStageGroup(group.key)}>
+                        <span><i className={`fas ${group.key === "college" ? "fa-university" : "fa-school"}`}></i></span>
+                        <div className="stage-choice-copy">
+                          <strong>{group.label}</strong>
+                          <small>{group.key === "college" ? "فرق الجامعة والكليات" : "صفوف المرحلة الثانوية"}</small>
+                        </div>
+                        <div className="stage-metrics">
+                          <b>{group.options.length}<em>مراحل</em></b>
+                          <b>{groupSubjectsCount}<em>مواد</em></b>
+                          <b>{groupChaptersCount}<em>شابتر</em></b>
+                          <b>{groupLessonsCount}<em>محاضرة</em></b>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {!isContentLoading && contentStep === "years" && (
                 <>
                   <div className="content-year-grid">
-                    {yearOptions.map((year) => {
+                    {contentYearOptions.map((year) => {
                       const yearSubjectsCount = subjects.filter((subject) => {
                         const subjectChapters = chapters[subject.id] || [];
                         const subjectLessons = lessons.filter((lesson) => lesson.subjectId === subject.id || lesson.subject === subject.name);
-                        return subjectChapters.some((chapter) => chapter.year === year) || subjectLessons.some((lesson) => lesson.year === year);
+                        return subjectBelongsToYear(subject, year) || subjectChapters.some((chapter) => isSameYear(chapter.year, year)) || subjectLessons.some((lesson) => isSameYear(lesson.year, year));
                       }).length;
-                      const yearChaptersCount = Object.values(chapters).flat().filter((chapter) => chapter.year === year).length;
-                      const yearLessonsCount = lessons.filter((lesson) => lesson.year === year).length;
+                      const yearChaptersCount = Object.values(chapters).flat().filter((chapter) => isSameYear(chapter.year, year)).length;
+                      const yearLessonsCount = lessons.filter((lesson) => isSameYear(lesson.year, year)).length;
                       return (
                         <button key={year} type="button" className="year-card flow-card" onClick={() => openYearContent(year)}>
                           <span><i className="fas fa-graduation-cap"></i></span>
@@ -2380,7 +2431,7 @@ const AdminDashboard = ({
                 </>
               )}
 
-              {contentStep === "subjects" && (
+              {!isContentLoading && contentStep === "subjects" && (
                 <div className="content-screen">
                   <div className="card course-form content-create-card">
                     <input placeholder="اسم المادة الجديدة" className="gold-input" value={newSubject} onChange={e => setNewSubject(e.target.value)} />
@@ -2390,10 +2441,10 @@ const AdminDashboard = ({
 
                   <div className="content-subject-grid">
                     {subjectsForSelectedContentYear.map((subject) => {
-                      const subjectChapters = (chapters[subject.id] || []).filter((chapter) => chapter.year === selectedContentYear);
+                      const subjectChapters = (chapters[subject.id] || []).filter((chapter) => isSameYear(chapter.year, selectedContentYear));
                       const subjectLessons = lessons.filter((lesson) => {
                         const matchesSubject = lesson.subjectId === subject.id || lesson.subject === subject.name;
-                        return matchesSubject && lesson.year === selectedContentYear;
+                        return matchesSubject && isSameYear(lesson.year, selectedContentYear);
                       });
                       return (
                         <div key={subject.id} className="content-subject-card">
@@ -2403,7 +2454,10 @@ const AdminDashboard = ({
                             </div>
                             <div className="subject-card-copy">
                               <h3>{subject.name}</h3>
-                              <p>{subjectChapters.length} شابتر • {subjectLessons.length} محاضرة</p>
+                              <div className="subject-badges">
+                                <span><i className="fas fa-layer-group"></i>{subjectChapters.length} شابتر</span>
+                                <span><i className="fas fa-play-circle"></i>{subjectLessons.length} محاضرة</span>
+                              </div>
                             </div>
                             <i className="fas fa-chevron-left"></i>
                           </button>
@@ -2425,17 +2479,24 @@ const AdminDashboard = ({
                       );
                     })}
                   </div>
-                  {subjectsForSelectedContentYear.length === 0 && <div className="empty-state">لا توجد مواد مرتبطة بـ {selectedContentYear} حتى الآن. أضف مادة جديدة من الأعلى.</div>}
+                  {subjectsForSelectedContentYear.length === 0 && (
+                    <div className="empty-state content-empty-card">
+                      <i className="fas fa-book-open"></i>
+                      <strong>لسه مفيش مواد في {selectedContentYear}</strong>
+                      <span>ابدأ بإضافة أول مادة، وبعدها هتقدر تضيف الشابترات والمحاضرات.</span>
+                      <button className="btn-primary" onClick={() => document.querySelector('.content-create-card .gold-input')?.focus()}>إضافة مادة</button>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {contentStep === "chapters" && selectedContentSubject && (
+              {!isContentLoading && contentStep === "chapters" && selectedContentSubject && (
                 <div className="content-screen">
                   {showAddChapterFor === selectedContentSubject.id ? (
                     <div className="chapter-form modal-chapter-form soft-panel">
                       <input className="gold-input" placeholder="اسم الشابتر" value={newChapter.name} onChange={(e) => setNewChapter((prev) => ({ ...prev, name: e.target.value }))} />
                       <select className="gold-input" value={newChapter.year} onChange={(e) => setNewChapter((prev) => ({ ...prev, year: e.target.value }))}>
-                        {yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+                        {contentYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
                       </select>
                       <textarea className="gold-input" placeholder="ملاحظات الشابتر" value={newChapter.notes} onChange={(e) => setNewChapter((prev) => ({ ...prev, notes: e.target.value }))} />
                       <button className="btn-primary" onClick={() => handleAddChapter(selectedContentSubject)}>حفظ الشابتر</button>
@@ -2470,7 +2531,7 @@ const AdminDashboard = ({
                             <div className="inline-editor wide">
                               <input className="gold-input" value={editingChapter.name} onChange={(e) => setEditingChapter((prev) => ({ ...prev, name: e.target.value }))} />
                               <select className="gold-input" value={editingChapter.year || selectedContentYear} onChange={(e) => setEditingChapter((prev) => ({ ...prev, year: e.target.value }))}>
-                                {yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+                                {contentYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
                               </select>
                               <button className="btn-action btn-green" onClick={handleRenameChapter}>حفظ</button>
                               <button className="btn-action btn-red" onClick={() => setEditingChapter(null)}>إلغاء</button>
@@ -2480,11 +2541,18 @@ const AdminDashboard = ({
                       );
                     })}
                   </div>
-                  {visibleContentChapters.length === 0 && <div className="empty-state">لا توجد شابترات أو محاضرات قديمة لهذه المادة في {selectedContentYear}. أضف أول شابتر من الزر بالأعلى.</div>}
+                  {visibleContentChapters.length === 0 && (
+                    <div className="empty-state content-empty-card">
+                      <i className="fas fa-layer-group"></i>
+                      <strong>لسه مفيش شابترات هنا</strong>
+                      <span>أضف أول شابتر لمادة {selectedContentSubject.name} في {selectedContentYear}.</span>
+                      <button className="btn-primary" onClick={() => { setShowAddChapterFor(selectedContentSubject.id); setNewChapter({ name: "", notes: "", year: selectedContentYear }); }}>إضافة شابتر</button>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {contentStep === "lessons" && selectedContentSubject && selectedContentChapter && (
+              {!isContentLoading && contentStep === "lessons" && selectedContentSubject && selectedContentChapter && (
                 <div className="chapter-videos-panel content-screen">
                   <div className="chapter-videos-head">
                     <div>
@@ -2500,7 +2568,6 @@ const AdminDashboard = ({
                   </div>
                   <div className="chapter-video-list">
                     {selectedContentChapterLessons.map((lesson, index) => {
-                      const bunnyStatusLabel = getBunnyStatusLabel(lesson);
                       const draggingIndex = selectedContentChapterLessons.findIndex((item) => item.id === draggingLessonId);
                       const isDragTarget = dragOverLessonId === lesson.id && draggingLessonId !== lesson.id;
                       const dropDirection = draggingIndex >= 0 && draggingIndex < index ? 'after' : 'before';
@@ -2534,18 +2601,11 @@ const AdminDashboard = ({
                           <div>
                             <strong>{lesson.title}</strong>
                             <span><b className="order-pill">#{index + 1}</b> {lesson.semester || 'بدون ترم'} {lesson.pdfUrl ? '• PDF' : ''} {lesson.isActive === false ? '• مخفي' : ''}</span>
-                            {bunnyStatusLabel && (
-                              <span className={`bunny-status-badge ${bunnyStatusLabel.className}`}>
-                                <i className={`fas ${bunnyStatusLabel.icon}`}></i> {bunnyStatusLabel.text}
-                              </span>
-                            )}
                           </div>
                           <div className="chapter-video-actions">
                             <button className="icon-btn drag-handle" title="اسحب الكارت لتغيير الترتيب"><i className="fas fa-grip-vertical"></i><span>ترتيب</span></button>
                             <button className="icon-btn" disabled={index === 0} onClick={() => handleMoveLesson(lesson.id, "up", selectedContentChapterLessons)} title="رفع الفيديو"><i className="fas fa-arrow-up"></i></button>
                             <button className="icon-btn" disabled={index === selectedContentChapterLessons.length - 1} onClick={() => handleMoveLesson(lesson.id, "down", selectedContentChapterLessons)} title="تنزيل الفيديو"><i className="fas fa-arrow-down"></i></button>
-                            {bunnyStatusLabel && <button onClick={() => refreshBunnyStatus(lesson)} className="btn-action btn-cyan">تحديث Bunny</button>}
-                            {bunnyStatusLabel?.className === 'ready' && <button onClick={() => notifyLessonStudents(lesson)} className="btn-action btn-green">إشعار</button>}
                             <button onClick={() => toggleLessonVisibility(lesson.id, lesson.isActive)} className={`btn-action ${lesson.isActive === false ? 'btn-green' : 'btn-orange'}`}>{lesson.isActive === false ? 'إظهار' : 'إخفاء'}</button>
                             <button onClick={() => handleEditLesson(lesson)} className="btn-action btn-cyan">تعديل</button>
                             <button onClick={() => setStatsLesson(lesson)} className="btn-action btn-green">إحصائيات</button>
@@ -2563,7 +2623,14 @@ const AdminDashboard = ({
                         </div>
                       );
                     })}
-                    {selectedContentChapterLessons.length === 0 && <div className="empty-state">لا يوجد محتوى داخل هذا الشابتر بعد. اضغط إضافة محاضرة.</div>}
+                    {selectedContentChapterLessons.length === 0 && (
+                      <div className="empty-state content-empty-card">
+                        <i className="fas fa-video"></i>
+                        <strong>لسه مفيش محاضرات في الشابتر ده</strong>
+                        <span>اضغط إضافة محاضرة وارفع الفيديو أو الرابط الخاص بيها.</span>
+                        {!selectedContentChapter.isLegacy && <button className="btn-primary" onClick={() => prepareLessonForChapter(selectedContentSubject, selectedContentChapter)}>إضافة محاضرة</button>}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -2616,7 +2683,7 @@ const AdminDashboard = ({
                           <label>
                   <strong>المرحلة:</strong>
                             <select className="gold-input lesson-modal-input" value={newLesson?.year || selectedContentYear} onChange={e => setNewLesson(prev => ({ ...prev, year: e.target.value, chapterId: "", chapterName: "" }))}>
-                              {yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+                              {contentYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
                             </select>
                           </label>
                           <label>
@@ -2626,7 +2693,7 @@ const AdminDashboard = ({
                               setNewLesson((prev) => ({ ...prev, chapterId: selectedChapter?.id || "", chapterName: selectedChapter?.name || "", year: selectedChapter?.year || prev.year }));
                             }}>
                               <option value="">بدون شابتر</option>
-                              {(chapters[selectedContentSubject.id] || []).filter((chapter) => chapter.year === (newLesson?.year || selectedContentYear)).map((chapter) => <option key={chapter.id} value={chapter.id}>{chapter.name}</option>)}
+                              {(chapters[selectedContentSubject.id] || []).filter((chapter) => isSameYear(chapter.year, newLesson?.year || selectedContentYear)).map((chapter) => <option key={chapter.id} value={chapter.id}>{chapter.name}</option>)}
                             </select>
                           </label>
                           <label>
@@ -3243,17 +3310,27 @@ const AdminDashboard = ({
         .content-panel-head strong { color: ${theme.text}; font-size: 18px; margin-bottom: 4px; }
         .content-panel-head span { color: ${theme.subText}; font-size: 12px; }
         .content-flow-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .content-breadcrumbs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px; background: ${theme.surfaceAlt}; border: 1.5px solid ${visibleBorder}; border-radius: 16px; }
-        .content-breadcrumbs button { border: 1px solid ${theme.borderSoft}; background: ${theme.surface}; color: ${theme.subText}; border-radius: 999px; padding: 8px 13px; cursor: pointer; font-family: 'Cairo'; font-weight: 900; }
+        .content-breadcrumbs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; background: ${theme.surfaceAlt}; border: 1.5px solid ${visibleBorder}; border-radius: 16px; }
+        .content-breadcrumbs button { position: relative; border: 1px solid ${theme.borderSoft}; background: ${theme.surface}; color: ${theme.subText}; border-radius: 999px; padding: 8px 13px; cursor: pointer; font-family: 'Cairo'; font-weight: 900; }
+        .content-breadcrumbs button + button { margin-inline-start: 18px; }
+        .content-breadcrumbs button + button::before { content: '›'; position: absolute; inset-inline-start: -18px; top: 50%; transform: translateY(-50%); color: ${theme.muted}; font-weight: 900; }
         .content-breadcrumbs button.active { background: ${theme.accent}; border-color: ${theme.accent}; color: ${theme.buttonText}; }
         .content-screen { display: grid; gap: 14px; animation: contentSlide 0.22s ease both; }
         @keyframes contentSlide { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
         .content-subject-grid, .content-chapter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-        .content-subject-card, .content-chapter-card { background: ${theme.surfaceAlt}; border: 1.5px solid ${visibleBorder}; border-radius: 18px; padding: 12px; display: grid; gap: 10px; transition: 0.18s ease; }
+        .content-subject-card, .content-chapter-card { background: ${theme.surfaceAlt}; border: 1.5px solid ${visibleBorder}; border-radius: 18px; padding: 12px; display: grid; gap: 10px; transition: 0.18s ease; overflow: hidden; }
         .content-subject-card:hover, .content-chapter-card:hover { border-color: ${theme.accent}66; transform: translateY(-1px); box-shadow: 0 12px 24px ${theme.accent}12; }
         .legacy-chapter-card { border-style: dashed; background: linear-gradient(135deg, ${theme.surfaceAlt}, ${theme.info}0F); }
         .legacy-chapter-card .chapter-select-btn span { background: ${theme.info}16; color: ${theme.info}; border-color: ${theme.info}33; }
         .flow-card { min-height: 126px; }
+        .content-stage-grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); }
+        .stage-choice-card { min-height: 180px; grid-template-columns: 64px minmax(0, 1fr); align-content: start; padding: 20px; background: linear-gradient(135deg, ${theme.surface}, ${theme.accent}10); }
+        .stage-choice-card > span { width: 64px; height: 64px; border-radius: 20px; font-size: 25px; }
+        .stage-choice-copy strong { display: block; font-size: 23px; margin-bottom: 5px; }
+        .stage-choice-copy small { color: ${theme.subText}; font-weight: 900; }
+        .stage-metrics { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+        .stage-metrics b { min-height: 58px; border-radius: 14px; border: 1px solid ${theme.accent}22; background: ${theme.accent}0F; color: ${theme.text}; display: grid; place-items: center; align-content: center; font-size: 20px; }
+        .stage-metrics em { font-style: normal; color: ${theme.subText}; font-size: 11px; font-weight: 900; }
         .content-section-hero { margin-top: 24px; border-style: dashed; }
         .hero-pill { background: ${theme.accent}22; color: ${theme.accent}; border: 1px solid ${theme.accent}55; border-radius: 999px; padding: 10px 18px; font-weight: 900; }
         .requests-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
@@ -3296,6 +3373,18 @@ const AdminDashboard = ({
         .ops-status.danger { background: ${theme.danger}; box-shadow: 0 0 0 4px ${theme.danger}18; }
         .ops-empty { color: ${theme.muted}; border: 1px dashed ${theme.borderSoft}; background: ${theme.surfaceAlt}; border-radius: 14px; padding: 22px; text-align: center; margin-top: 12px; }
         .empty-state { grid-column: 1 / -1; background: ${theme.surface}; border: 1px dashed ${theme.borderSoft}; color: ${theme.subText}; border-radius: 18px; padding: 30px; text-align: center; }
+        .content-empty-card { display: grid; place-items: center; gap: 10px; min-height: 220px; background: linear-gradient(135deg, ${theme.surface}, ${theme.accent}0A); border: 1.5px dashed ${theme.accent}55; }
+        .content-empty-card > i { width: 58px; height: 58px; border-radius: 18px; display: grid; place-items: center; background: ${theme.accent}14; color: ${theme.accent}; border: 1px solid ${theme.accent}33; font-size: 24px; }
+        .content-empty-card strong { color: ${theme.text}; font-size: 18px; }
+        .content-empty-card span { max-width: 520px; line-height: 1.8; }
+        .content-empty-card .btn-primary { width: fit-content; min-width: 150px; padding-inline: 18px; }
+        .content-skeleton-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+        .content-skeleton-card { min-height: 132px; border-radius: 18px; border: 1.5px solid ${visibleBorder}; background: ${theme.surfaceAlt}; padding: 16px; display: grid; grid-template-columns: 52px 1fr; gap: 12px; align-items: center; overflow: hidden; }
+        .content-skeleton-card span, .content-skeleton-card strong, .content-skeleton-card small { display: block; border-radius: 999px; background: linear-gradient(90deg, ${theme.surfaceAlt}, ${theme.accent}18, ${theme.surfaceAlt}); background-size: 220% 100%; animation: skeletonPulse 1.25s ease-in-out infinite; }
+        .content-skeleton-card span { width: 52px; height: 52px; border-radius: 16px; grid-row: span 2; }
+        .content-skeleton-card strong { height: 18px; width: 70%; }
+        .content-skeleton-card small { height: 12px; width: 92%; }
+        @keyframes skeletonPulse { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
         .codes-toolbar { display: grid; grid-template-columns: 0.9fr 1.35fr; gap: 16px; margin-bottom: 16px; }
         .codes-panel { background: ${theme.surface}; border: 1px solid ${theme.borderSoft}; border-radius: 18px; padding: 16px; box-shadow: ${isLightTheme ? '0 12px 28px rgba(15,23,42,0.06)' : '0 14px 30px rgba(0,0,0,0.10)'}; }
         .codes-panel-title { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
@@ -3406,10 +3495,12 @@ const AdminDashboard = ({
         .content-section-title span { color: ${theme.subText}; font-size: 12px; }
         .subject-picker-grid { gap: 14px; }
         .subject-picker-grid .course-card { display: grid; gap: 12px; padding: 14px; border-radius: 16px; box-shadow: ${isLightTheme ? '0 8px 18px rgba(15,23,42,0.045)' : '0 10px 22px rgba(0,0,0,0.08)'}; }
-        .subject-open-btn { border: none; background: transparent; color: inherit; padding: 0; display: flex; align-items: center; gap: 12px; text-align: right; cursor: pointer; font-family: 'Cairo'; width: 100%; }
+        .subject-open-btn { border: none; background: transparent; color: inherit; padding: 0; display: flex; align-items: center; gap: 12px; text-align: right; cursor: pointer; font-family: 'Cairo'; width: 100%; min-width: 0; }
         .subject-open-btn h3 { margin: 0 0 4px; color: ${theme.text}; }
         .subject-open-btn p { margin: 0; color: ${theme.subText}; font-size: 13px; }
         .subject-card-copy { min-width: 0; flex: 1; }
+        .subject-badges { display: flex; gap: 7px; flex-wrap: wrap; }
+        .subject-badges span { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 9px; border-radius: 999px; color: ${theme.accent}; background: ${theme.accent}12; border: 1px solid ${theme.accent}24; font-size: 11px; font-weight: 900; }
         .subject-open-btn > i { color: ${theme.accent}; width: 34px; height: 34px; border-radius: 12px; display: grid; place-items: center; background: ${theme.accent}12; flex-shrink: 0; }
         .course-year-filter { background: ${theme.surface}; border: 1.5px solid ${visibleBorder}; border-radius: 18px; padding: 14px; margin-bottom: 18px; display: grid; gap: 10px; box-shadow: ${isLightTheme ? '0 10px 26px rgba(15,23,42,0.06)' : '0 12px 24px rgba(0,0,0,0.08)'}; }
         .course-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; }
@@ -3421,11 +3512,17 @@ const AdminDashboard = ({
         .course-head h3 { margin: 0 0 4px; color: ${theme.text}; }
         .course-head p { margin: 0; color: ${theme.subText}; font-size: 13px; }
         .course-actions, .chapter-actions, .lesson-actions, .form-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+        .content-chapter-card .chapter-actions { opacity: 0.68; transform: translateY(3px); transition: 0.18s ease; }
+        .content-chapter-card:hover .chapter-actions, .content-chapter-card:focus-within .chapter-actions { opacity: 1; transform: translateY(0); }
+        .chapter-actions.compact-actions { display: grid; grid-template-columns: repeat(2, 38px) minmax(108px, 1fr) repeat(2, 38px); gap: 7px; align-items: center; }
+        .chapter-actions .btn-action { min-height: 38px; padding: 7px 10px; font-size: 12px; }
         .icon-btn { border: 1px solid ${theme.borderSoft}; background: ${theme.surfaceAlt}; color: ${theme.text}; width: 38px; height: 38px; border-radius: 12px; cursor: pointer; display: inline-grid; place-items: center; transition: 0.2s ease; }
         .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
         .icon-btn.danger { color: ${theme.danger}; }
-        .inline-editor { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 10px; margin-top: 14px; align-items: center; }
-        .inline-editor.wide { grid-template-columns: 1fr 150px auto auto; width: 100%; }
+        .inline-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: 10px; margin-top: 14px; align-items: center; min-width: 0; }
+        .inline-editor.wide { grid-template-columns: minmax(130px, 1fr) minmax(72px, auto) minmax(72px, auto); width: 100%; }
+        .inline-editor.wide .gold-input:first-child { grid-column: 1 / -1; }
+        .inline-editor.wide .btn-action { width: 100%; min-width: 72px; padding-inline: 10px; }
         .chapter-panel { margin-top: 16px; border-top: 1px solid ${theme.borderSoft}; padding-top: 16px; display: grid; gap: 12px; }
         .chapter-form { display: grid; grid-template-columns: 1fr 160px; gap: 10px; background: ${theme.surfaceAlt}; padding: 12px; border-radius: 16px; border: 1px solid ${theme.borderSoft}; }
         .chapter-form textarea, .chapter-form button { grid-column: 1 / -1; }
@@ -3510,7 +3607,7 @@ const AdminDashboard = ({
         .chapter-select-btn strong { color: ${theme.text}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .chapter-select-btn small { color: ${theme.subText}; font-weight: 900; }
         .chapter-videos-panel { background: ${theme.surface}; border: 1.5px solid ${visibleBorder}; border-radius: 16px; padding: 12px; display: grid; gap: 12px; }
-        .chapter-videos-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1.5px solid ${visibleBorder}; }
+        .chapter-videos-head { position: sticky; top: 96px; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 0 12px; border-bottom: 1.5px solid ${visibleBorder}; background: ${theme.surface}F2; backdrop-filter: blur(10px); }
         .chapter-videos-head strong, .chapter-videos-head span { display: block; }
         .chapter-videos-head strong { color: ${theme.text}; margin-bottom: 4px; }
         .chapter-videos-head span { color: ${theme.subText}; font-size: 12px; }
@@ -3522,18 +3619,17 @@ const AdminDashboard = ({
         .chapter-video-card:hover { border-color: ${theme.accent}66; box-shadow: ${isLightTheme ? '0 14px 30px rgba(15,23,42,0.08)' : '0 14px 28px rgba(0,0,0,0.18)'}; transform: translateY(-1px); }
         .chapter-video-card.is-dragging { opacity: 0.5; transform: scale(0.985); border-style: dashed; border-color: ${theme.accent}; box-shadow: none; cursor: grabbing; }
         .chapter-video-card.is-drop-target { background: linear-gradient(135deg, ${theme.accent}18, ${theme.surfaceAlt}); border-color: ${theme.accent}; box-shadow: 0 16px 34px ${theme.accent}18; }
-        .chapter-video-card.is-drop-target::before { content: ''; position: absolute; left: 14px; right: 14px; height: 4px; border-radius: 999px; background: ${theme.gradient}; box-shadow: 0 0 0 4px ${theme.accent}18; }
-        .chapter-video-card.drop-before::before { top: -8px; }
-        .chapter-video-card.drop-after::before { bottom: -8px; }
+        .chapter-video-card.is-drop-target::before { content: ''; position: absolute; left: 10px; right: 10px; height: 7px; border-radius: 999px; background: ${theme.gradient}; box-shadow: 0 0 0 5px ${theme.accent}18, 0 10px 22px ${theme.accent}28; z-index: 2; }
+        .chapter-video-card.is-drop-target::after { content: 'هنا هيتحط الفيديو'; position: absolute; left: 18px; padding: 4px 9px; border-radius: 999px; background: ${theme.accent}; color: ${theme.buttonText}; font-size: 10px; font-weight: 900; z-index: 3; }
+        .chapter-video-card.drop-before::before { top: -10px; }
+        .chapter-video-card.drop-after::before { bottom: -10px; }
+        .chapter-video-card.drop-before::after { top: -28px; }
+        .chapter-video-card.drop-after::after { bottom: -28px; }
         .video-thumb-mini { width: 44px; height: 44px; border-radius: 14px; border: none; background: ${theme.accent}; color: ${theme.buttonText}; display: grid; place-items: center; cursor: pointer; }
         .chapter-video-card strong, .chapter-video-card span { display: block; }
         .chapter-video-card strong { color: ${theme.text}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .chapter-video-card span { color: ${theme.subText}; font-size: 12px; margin-top: 3px; }
         .order-pill { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; height: 22px; padding: 0 8px; margin-inline-end: 5px; border-radius: 999px; background: ${theme.accent}16; color: ${theme.accent}; border: 1px solid ${theme.accent}33; font-size: 11px; }
-        .bunny-status-badge { width: fit-content; margin-top: 7px; padding: 5px 9px; border-radius: 999px; font-weight: 900; border: 1px solid transparent; }
-        .bunny-status-badge.ready { color: ${theme.success}; background: ${theme.success}18; border-color: ${theme.success}44; }
-        .bunny-status-badge.processing { color: ${warningColor}; background: ${warningColor}18; border-color: ${warningColor}44; }
-        .bunny-status-badge.failed { color: ${theme.danger}; background: ${theme.danger}18; border-color: ${theme.danger}44; }
         .chapter-video-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
         .chapter-video-actions .btn-action { padding: 7px 9px; font-size: 12px; }
         .drag-handle { width: auto; min-width: 76px; padding-inline: 10px; gap: 7px; cursor: grab; color: ${theme.accent}; border-color: ${theme.accent}44; background: ${theme.accent}12; }
@@ -3693,6 +3789,20 @@ const AdminDashboard = ({
           .codes-grid { grid-template-columns: 1fr; }
           .bulk-actions span { margin-inline-start: 0; width: 100%; }
           .lesson-compose-grid, .course-form, .form-grid, .upload-grid, .lesson-row-card, .chapter-form, .inline-editor, .inline-editor.wide { grid-template-columns: 1fr; }
+          .content-stage-grid { grid-template-columns: 1fr; }
+          .stage-choice-card { grid-template-columns: 52px 1fr; min-height: 160px; padding: 16px; }
+          .stage-choice-card > span { width: 52px; height: 52px; border-radius: 16px; font-size: 21px; }
+          .stage-choice-copy strong { font-size: 20px; }
+          .stage-metrics { grid-template-columns: repeat(2, 1fr); }
+          .content-breadcrumbs { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 10px; }
+          .content-breadcrumbs button { flex: 0 0 auto; }
+          .content-subject-card, .content-chapter-card { padding: 10px; }
+          .subject-open-btn { align-items: flex-start; }
+          .subject-badges span { flex: 1 1 auto; justify-content: center; }
+          .chapter-actions.compact-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); opacity: 1; transform: none; }
+          .chapter-actions.compact-actions .btn-action { grid-column: 1 / -1; width: 100%; }
+          .chapter-actions.compact-actions .icon-btn { width: 100%; }
+          .content-empty-card .btn-primary { width: 100%; }
           .compose-side { position: static; }
           .publish-steps { width: 100%; }
           .publish-steps span { flex: 1; justify-content: center; }
@@ -3706,8 +3816,10 @@ const AdminDashboard = ({
           .chapter-select-btn { grid-template-columns: 38px 1fr 30px; }
           .chapter-select-btn small { grid-column: 2 / 3; }
           .chapter-video-card { grid-template-columns: 44px 1fr; }
-          .chapter-video-actions { grid-column: 1 / -1; justify-content: stretch; }
-          .chapter-video-actions .btn-action { flex: 1 1 120px; }
+          .chapter-videos-head { position: static; }
+          .chapter-video-actions { grid-column: 1 / -1; justify-content: stretch; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .chapter-video-actions .btn-action, .chapter-video-actions .icon-btn { width: 100%; min-width: 0; }
+          .drag-handle { grid-column: 1 / -1; }
           .lesson-form-modal { width: calc(100vw - 24px); max-height: calc(100vh - 24px); padding: 24px 16px 18px; }
           .lesson-modal-head { flex-direction: column-reverse; gap: 12px; padding-inline-start: 44px; }
           .lesson-modal-grid { grid-template-columns: 1fr; }
