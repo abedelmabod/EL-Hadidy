@@ -18,6 +18,11 @@ const AdminDashboard = ({
   const [isUploading, setIsUploading] = useState({ video: false, pdf: false });
   const [uploadProgress, setUploadProgress] = useState({ video: 0, pdf: 0 });
   const [isSavingLesson, setIsSavingLesson] = useState(false);
+  const [notificationStage, setNotificationStage] = useState('all');
+  const [notificationYear, setNotificationYear] = useState('all');
+  const [notificationTitle, setNotificationTitle] = useState('');
+  const [notificationBody, setNotificationBody] = useState('');
+  const [isSendingAnnouncement, setIsSendingAnnouncement] = useState(false);
   const [lessonTitle, setLessonTitle] = useState(newLesson?.title || "");
   const [newSubject, setNewSubject] = useState("");
   const [newSubjectImage, setNewSubjectImage] = useState("");
@@ -407,8 +412,8 @@ const AdminDashboard = ({
       .join('، ');
   };
 
-  const buildPushFailureMessage = ({ sent = 0, failed = 0, ticketErrors = [] } = {}) => {
-    const summary = summarizePushTicketErrors(ticketErrors);
+  const buildPushFailureMessage = ({ sent = 0, failed = 0, ticketErrors = [], batchErrors = [] } = {}) => {
+    const summary = [summarizePushTicketErrors(ticketErrors), ...batchErrors].filter(Boolean).join('، ');
     const hasInvalidCredentials = ticketErrors.some((ticket) => getPushTicketErrorText(ticket) === 'InvalidCredentials');
     const hasDeviceNotRegistered = ticketErrors.some((ticket) => getPushTicketErrorText(ticket) === 'DeviceNotRegistered');
 
@@ -502,11 +507,33 @@ const AdminDashboard = ({
     return Array.from(new Set(values.map(normalizeYearValue).filter(Boolean)));
   };
 
-  const collectStudentPushTargets = async (targetYear) => {
-    const normalizedYear = String(targetYear || '').trim();
-    const normalizedYearKey = normalizeYearValue(normalizedYear);
+  const getPushAudience = (stage = notificationStage, year = notificationYear) => ({
+    stage,
+    year: stage === 'all' ? 'all' : year,
+  });
+
+  const getPushAudienceLabel = ({ stage, year }) => {
+    if (stage === 'all') return 'كل الطلاب';
+    if (stage === 'year') return year || '';
+    if (year === 'all') return stageGroups.find((group) => group.key === stage)?.label || '';
+    return year;
+  };
+
+  const studentMatchesPushAudience = (student, audience) => {
+    if (audience.stage === 'all') return true;
+    if (audience.stage === 'year') return getStudentYearValues(student).some((year) => isSameYear(year, audience.year));
+    const stage = stageGroups.find((group) => group.key === audience.stage);
+    if (!stage) return false;
+    const targetYears = audience.year === 'all'
+      ? stage.options
+      : stage.options.filter((year) => isSameYear(year, audience.year));
+    return getStudentYearValues(student).some((year) => targetYears.some((targetYear) => isSameYear(year, targetYear)));
+  };
+
+  const collectStudentPushTargets = async (audience) => {
+    const targetLabel = getPushAudienceLabel(audience);
     const stats = {
-      targetYear: normalizedYear,
+      targetYear: targetLabel,
       matchedStudents: 0,
       banned: 0,
       permissionDenied: 0,
@@ -519,7 +546,7 @@ const AdminDashboard = ({
       eligibleStudents: 0,
     };
 
-    if (!normalizedYearKey) {
+    if (!targetLabel) {
       return { tokens: [], stats };
     }
 
@@ -535,8 +562,7 @@ const AdminDashboard = ({
 
     const tokens = [];
     Array.from(studentsById.values()).forEach((student) => {
-      const studentYears = getStudentYearValues(student);
-      if (!studentYears.some((year) => getCanonicalYearKey(year) === getCanonicalYearKey(normalizedYearKey))) return;
+      if (!studentMatchesPushAudience(student, audience)) return;
 
       stats.matchedStudents += 1;
 
@@ -618,9 +644,41 @@ const AdminDashboard = ({
     return 'لا توجد أجهزة صالحة لاستقبال الإشعار لهذه المرحلة حالياً.';
   };
 
+  const postPushMessages = async (messages) => {
+    let sent = 0;
+    let failed = 0;
+    const ticketErrors = [];
+    const batchErrors = [];
+
+    for (const chunk of chunkArray(messages)) {
+      try {
+        const response = await fetch(getPushApiEndpoint(), {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: chunk }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || payload?.message || `Push API failed with status ${response.status}`);
+        }
+
+        const tickets = Array.isArray(payload?.data) ? payload.data : [];
+        ticketErrors.push(...tickets.filter((ticket) => ticket.status !== 'ok'));
+        const accepted = tickets.filter((ticket) => ticket.status === 'ok').length;
+        sent += accepted;
+        failed += chunk.length - accepted;
+      } catch (error) {
+        failed += chunk.length;
+        batchErrors.push(error?.message || String(error));
+      }
+    }
+
+    return { sent, failed, ticketErrors, batchErrors };
+  };
+
   const sendPushNotification = async ({ title, body, year, lessonId, lessonTitle, lesson = {} }) => {
     try {
-      const { tokens, stats } = await collectStudentPushTargets(year);
+      const { tokens, stats } = await collectStudentPushTargets({ stage: 'year', year });
 
       if (!tokens.length) {
         const emptyMessage = buildPushEmptyMessage(stats);
@@ -662,32 +720,9 @@ const AdminDashboard = ({
         },
       }));
 
-      const responses = await Promise.all(chunkArray(messages).map(async (chunk) => {
-        const response = await fetch(getPushApiEndpoint(), {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ messages: chunk }),
-        });
-
-        const payload = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          throw new Error(payload?.error || payload?.message || `Push API failed with status ${response.status}`);
-        }
-
-        return payload;
-      }));
-
-      const tickets = responses.flatMap((response) => Array.isArray(response?.data) ? response.data : []);
-      const ticketErrors = tickets.filter((ticket) => ticket.status === 'error');
-      const missingTickets = Math.max(0, messages.length - tickets.length);
-      const failed = ticketErrors.length + missingTickets;
-      const sent = Math.max(0, messages.length - failed);
+      const { sent, failed, ticketErrors, batchErrors } = await postPushMessages(messages);
       const pushResultMessage = failed
-        ? buildPushFailureMessage({ sent, failed, ticketErrors })
+        ? buildPushFailureMessage({ sent, failed, ticketErrors, batchErrors })
         : `تم الإرسال إلى ${sent} جهاز.`;
 
       Swal.fire({
@@ -723,6 +758,68 @@ const AdminDashboard = ({
         color: theme.text,
       });
       return { sent: 0, failed: 0, error };
+    }
+  };
+
+  const sendAnnouncement = async (event) => {
+    event.preventDefault();
+    if (isSendingAnnouncement) return;
+
+    const title = notificationTitle.trim();
+    const body = notificationBody.trim();
+    if (!title || !body) {
+      return Swal.fire({ icon: 'warning', title: 'أكمل الإشعار', text: 'اكتب العنوان ونص الإشعار أولاً.', background: theme.surface, color: theme.text });
+    }
+
+    setIsSendingAnnouncement(true);
+    try {
+      const audience = getPushAudience();
+      const { tokens, stats } = await collectStudentPushTargets(audience);
+      if (!tokens.length) {
+        return Swal.fire({ icon: 'info', title: 'لا توجد أجهزة مستهدفة', text: buildPushEmptyMessage(stats), background: theme.surface, color: theme.text });
+      }
+
+      const confirmation = await Swal.fire({
+        icon: 'question',
+        title: 'إرسال الإشعار؟',
+        text: `سيُرسل إلى ${tokens.length} جهاز مسجل ضمن ${getPushAudienceLabel(audience)}. راجع العنوان والنص قبل التأكيد.`,
+        showCancelButton: true,
+        confirmButtonText: 'إرسال الآن',
+        cancelButtonText: 'إلغاء',
+        confirmButtonColor: theme.accent,
+        background: theme.surface,
+        color: theme.text,
+      });
+      if (!confirmation.isConfirmed) return;
+
+      const messages = tokens.map((token) => ({
+        to: token,
+        sound: 'default',
+        title,
+        body,
+        priority: 'high',
+        channelId: 'default',
+        data: { type: 'announcement' },
+      }));
+      const result = await postPushMessages(messages);
+      if (result.sent > 0) {
+        setNotificationTitle('');
+        setNotificationBody('');
+      }
+      await Swal.fire({
+        icon: result.failed ? 'warning' : 'success',
+        title: result.failed ? 'اكتمل الإرسال جزئياً' : 'تم إرسال الإشعار',
+        text: result.failed
+          ? buildPushFailureMessage(result)
+          : `قبلت خدمة الإشعارات الطلب لـ ${result.sent} جهاز.`,
+        background: theme.surface,
+        color: theme.text,
+      });
+    } catch (error) {
+      console.error('Announcement push failed:', error);
+      await Swal.fire({ icon: 'error', title: 'تعذر إرسال الإشعار', text: error?.message || 'راجع الاتصال ثم حاول مرة أخرى.', background: theme.surface, color: theme.text });
+    } finally {
+      setIsSendingAnnouncement(false);
     }
   };
 
@@ -1790,6 +1887,7 @@ const AdminDashboard = ({
     { id: 'stats', icon: 'fa-chart-pie', label: 'الرئيسية' },
     { id: 'content', icon: 'fa-layer-group', label: 'المحتوى' },
     { id: 'students', icon: 'fa-users', label: 'الطلاب' },
+    { id: 'notifications', icon: 'fa-bell', label: 'الإشعارات' },
     { id: 'codes', icon: 'fa-ticket-alt', label: 'الأكواد' },
     { id: 'support_requests', icon: 'fa-headset', label: 'طلبات الدعم', badge: pendingSupportRequests.length },
     { id: 'logs', icon: 'fa-shield-alt', label: 'الرقابة' },
@@ -1801,11 +1899,20 @@ const AdminDashboard = ({
     lessons: { title: 'إدارة المحتوى', subtitle: 'المواد والشابترات والمحاضرات في صفحة واحدة للمدرس' },
     add_lesson: { title: 'إضافة محاضرة', subtitle: 'رفع محتوى جديد مباشرة إلى المنصة' },
     students: { title: 'الطلاب', subtitle: 'بحث، مراجعة، وحظر أو تفعيل الحسابات' },
+    notifications: { title: 'إرسال إشعار', subtitle: 'رسالة مباشرة لأجهزة الطلاب المسجلة في التطبيق' },
     codes: { title: 'الأكواد', subtitle: 'توليد الأكواد وتصديرها ومراجعة الاستخدام' },
     support_requests: { title: 'طلبات الدعم', subtitle: 'طلبات تصفير الجهاز ومشاكل المحتوى والحساب القادمة من التطبيق' },
     logs: { title: 'الرقابة', subtitle: 'سجل الحماية والتنبيهات الأمنية' },
   };
   const currentSection = sectionTitles[activeTab] || sectionTitles.stats;
+  const notificationAudience = getPushAudience();
+  const notificationAudienceStudents = studentsDB.filter((student) => studentMatchesPushAudience(student, notificationAudience));
+  const notificationAudienceTokens = new Set(notificationAudienceStudents
+    .filter((student) => !student.isBanned
+      && student.notificationPermissionStatus !== 'denied'
+      && isInstalledNotificationClient(student)
+      && normalizeMetaValue(student.notificationTokenSource) === 'installed-app-v2')
+    .flatMap((student) => getStudentPushTokens(student).filter(isExpoPushToken)));
   const topPills = [
     { label: 'طلاب', value: studentsDB.length },
     { label: 'محاضرات', value: lessons.length },
@@ -2167,6 +2274,68 @@ const AdminDashboard = ({
               </div>
             </div>
           </div>
+        )}
+
+        {activeTab === 'notifications' && (
+          <form className="notification-compose fade-in" onSubmit={sendAnnouncement}>
+            <div className="notification-compose-main">
+              <section className="notification-fieldset">
+                <div className="notification-section-head">
+                  <h2>المستلمون</h2>
+                  <span>{notificationAudienceStudents.length} طالب · {notificationAudienceTokens.size} جهاز جاهز</span>
+                </div>
+                <div className="notification-target-options">
+                  <button type="button" className={notificationStage === 'all' ? 'selected' : ''} aria-pressed={notificationStage === 'all'} onClick={() => { setNotificationStage('all'); setNotificationYear('all'); }}>
+                    <i className="fas fa-users"></i><span>كل الطلاب</span>
+                  </button>
+                  {stageGroups.map((group) => (
+                    <button key={group.key} type="button" className={notificationStage === group.key ? 'selected' : ''} aria-pressed={notificationStage === group.key} onClick={() => { setNotificationStage(group.key); setNotificationYear('all'); }}>
+                      <i className={`fas ${group.key === 'college' ? 'fa-graduation-cap' : 'fa-school'}`}></i><span>{group.label}</span>
+                    </button>
+                  ))}
+                </div>
+                {notificationStage !== 'all' && (
+                  <label className="notification-field">
+                    <span>{notificationStage === 'college' ? 'الفرقة' : 'الصف الدراسي'}</span>
+                    <select className="gold-input" value={notificationYear} onChange={(event) => setNotificationYear(event.target.value)}>
+                      <option value="all">كل {notificationStage === 'college' ? 'الفرق الجامعية' : 'الصفوف الثانوية'}</option>
+                      {stageGroups.find((group) => group.key === notificationStage)?.options.map((year) => <option key={year} value={year}>{year}</option>)}
+                    </select>
+                  </label>
+                )}
+              </section>
+
+              <section className="notification-fieldset">
+                <div className="notification-section-head"><h2>الرسالة</h2></div>
+                <label className="notification-field">
+                  <span>عنوان الإشعار</span>
+                  <input className="gold-input" value={notificationTitle} onChange={(event) => setNotificationTitle(event.target.value)} maxLength={80} placeholder="عنوان الإشعار" required />
+                </label>
+                <label className="notification-field">
+                  <span>نص الإشعار</span>
+                  <textarea className="gold-input" value={notificationBody} onChange={(event) => setNotificationBody(event.target.value)} maxLength={240} rows={5} placeholder="اكتب الرسالة التي ستصل للطلاب" required />
+                  <small>{notificationBody.length}/240</small>
+                </label>
+                <button className="btn-primary notification-send-button" type="submit" disabled={isSendingAnnouncement || !notificationTitle.trim() || !notificationBody.trim()}>
+                  <i className={`fas ${isSendingAnnouncement ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`}></i>
+                  {isSendingAnnouncement ? 'جارٍ الإرسال...' : 'إرسال الإشعار'}
+                </button>
+              </section>
+            </div>
+
+            <aside className="notification-preview">
+              <div className="notification-section-head"><h2>معاينة</h2></div>
+              <span className="notification-preview-audience"><i className="fas fa-bullseye"></i> {getPushAudienceLabel(notificationAudience)}</span>
+              <div className="notification-preview-message">
+                <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" />
+                <div>
+                  <strong>{notificationTitle.trim() || 'عنوان الإشعار'}</strong>
+                  <p>{notificationBody.trim() || 'نص الإشعار سيظهر هنا.'}</p>
+                </div>
+              </div>
+              <p className="notification-preview-note">العدد النهائي للأجهزة بيتراجع وقت الإرسال.</p>
+            </aside>
+          </form>
         )}
 
         {activeTab === 'support_requests' && (
@@ -3236,6 +3405,29 @@ const AdminDashboard = ({
         .gold-input { background: ${theme.surfaceAlt}; color: ${theme.text}; border: 1px solid ${theme.borderSoft}; padding: 12px 14px; border-radius: 12px; outline: none; width: 100%; font-family: 'Cairo'; transition: 0.18s ease; min-height: 46px; }
         .gold-input:focus { border-color: ${theme.accent}; box-shadow: 0 0 0 3px ${theme.accent}18; }
         .gold-input::placeholder { color: ${theme.muted}; }
+        .notification-compose { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: 28px; align-items: start; max-width: 1180px; }
+        .notification-compose-main { min-width: 0; display: grid; gap: 28px; }
+        .notification-fieldset { display: grid; gap: 16px; min-width: 0; padding-bottom: 28px; border-bottom: 1px solid ${visibleBorder}; }
+        .notification-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        .notification-section-head h2 { margin: 0; color: ${theme.text}; font-size: 18px; }
+        .notification-section-head > span { color: ${theme.subText}; font-size: 12px; }
+        .notification-target-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+        .notification-target-options button { min-width: 0; min-height: 76px; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px; border: 1.5px solid ${visibleBorder}; border-radius: 8px; background: ${theme.surface}; color: ${theme.text}; font: 800 13px 'Cairo', sans-serif; cursor: pointer; }
+        .notification-target-options button i { color: ${theme.accent}; font-size: 18px; }
+        .notification-target-options button.selected { border-color: ${theme.accent}; background: ${theme.accent}16; }
+        .notification-field { display: grid; gap: 7px; color: ${theme.text}; font-size: 13px; font-weight: 800; }
+        .notification-field textarea { resize: vertical; min-height: 130px; line-height: 1.8; }
+        .notification-field small { justify-self: end; color: ${theme.subText}; font-size: 11px; }
+        .notification-send-button { width: fit-content; min-width: 190px; display: inline-flex; justify-content: center; align-items: center; gap: 9px; }
+        .notification-preview { min-width: 0; padding: 18px; border: 1px solid ${visibleBorder}; border-radius: 8px; background: ${theme.surface}; display: grid; gap: 16px; }
+        .notification-preview-audience { color: ${theme.accent}; font-size: 12px; font-weight: 800; }
+        .notification-preview-audience i { margin-inline-end: 6px; }
+        .notification-preview-message { display: flex; align-items: start; gap: 12px; padding: 14px; border-radius: 8px; background: ${theme.surfaceAlt}; min-width: 0; }
+        .notification-preview-message img { width: 38px; height: 38px; border-radius: 8px; object-fit: cover; flex-shrink: 0; }
+        .notification-preview-message div { min-width: 0; }
+        .notification-preview-message strong { display: block; color: ${theme.text}; font-size: 13px; overflow-wrap: anywhere; }
+        .notification-preview-message p { color: ${theme.subText}; font-size: 12px; margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .notification-preview-note { color: ${theme.subText}; font-size: 11px; margin: 0; }
         .btn-primary { background: ${theme.gradient}; color: ${theme.buttonText}; border: none; padding: 13px 16px; border-radius: 12px; font-weight: 900; cursor: pointer; width: 100%; transition: 0.2s ease; min-height: 46px; box-shadow: 0 10px 22px ${theme.accent}22; }
         .btn-primary:hover, .quick-action:hover, .btn-secondary:hover, .btn-action:hover, .icon-btn:hover { transform: translateY(-1px); filter: brightness(1.05); }
         .btn-secondary { background: ${theme.surfaceAlt}; color: ${theme.text}; border: 1px solid ${theme.borderSoft}; padding: 12px 20px; border-radius: 12px; cursor: pointer; transition: 0.2s ease; }
@@ -3760,7 +3952,13 @@ const AdminDashboard = ({
           border: 1.5px solid ${theme.danger};
         }
         .fade-in { animation: fadeIn 0.4s ease-out; }
+        @media (max-width: 1250px) {
+          .notification-compose { grid-template-columns: 1fr; }
+        }
         @media (max-width: 768px) {
+          .notification-compose { grid-template-columns: 1fr; gap: 24px; }
+          .notification-target-options { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+          .notification-send-button { width: 100%; }
           .page-head { align-items: stretch; }
           .global-search { max-width: none; flex-basis: 100%; order: 3; }
           .insights-grid, .codes-toolbar, .codes-summary { grid-template-columns: 1fr; }
