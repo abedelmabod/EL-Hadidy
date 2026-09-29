@@ -2572,9 +2572,10 @@ const AdminDashboard = ({
                           <button className="video-thumb-mini" onClick={() => setPlayingVideoId((current) => current === lesson.id ? null : lesson.id)}>
                             <i className={`fas ${playingVideoId === lesson.id ? 'fa-pause' : 'fa-play'}`}></i>
                           </button>
-                          <div>
+                          <div className="chapter-video-details">
                             <strong>{lesson.title}</strong>
                             <span><b className="order-pill">#{index + 1}</b> {lesson.semester || 'بدون ترم'} {lesson.pdfUrl ? '• PDF' : ''} {lesson.isActive === false ? '• مخفي' : ''}</span>
+                            <p className="chapter-video-description"><b>الوصف:</b> {lesson.description?.trim() || 'لم يضف وصف بعد'}</p>
                           </div>
                           <div className="chapter-video-actions">
                             <button className="icon-btn drag-handle" title="اسحب الكارت لتغيير الترتيب"><i className="fas fa-grip-vertical"></i><span>ترتيب</span></button>
@@ -3600,9 +3601,12 @@ const AdminDashboard = ({
         .chapter-video-card.drop-before::after { top: -28px; }
         .chapter-video-card.drop-after::after { bottom: -28px; }
         .video-thumb-mini { width: 44px; height: 44px; border-radius: 14px; border: none; background: ${theme.accent}; color: ${theme.buttonText}; display: grid; place-items: center; cursor: pointer; }
+        .chapter-video-details { min-width: 0; }
         .chapter-video-card strong, .chapter-video-card span { display: block; }
         .chapter-video-card strong { color: ${theme.text}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .chapter-video-card span { color: ${theme.subText}; font-size: 12px; margin-top: 3px; }
+        .chapter-video-description { color: ${theme.subText}; font-size: 12px; line-height: 1.7; margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .chapter-video-description b { color: ${theme.text}; }
         .order-pill { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; height: 22px; padding: 0 8px; margin-inline-end: 5px; border-radius: 999px; background: ${theme.accent}16; color: ${theme.accent}; border: 1px solid ${theme.accent}33; font-size: 11px; }
         .chapter-video-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
         .chapter-video-actions .btn-action { padding: 7px 9px; font-size: 12px; }
