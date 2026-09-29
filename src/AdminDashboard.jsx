@@ -1036,14 +1036,6 @@ const AdminDashboard = ({
     return match?.[1] || "";
   };
 
-  const normalizeBunnyStatus = (status) => {
-    const value = String(status ?? '').toLowerCase();
-    if (['4', 'finished', 'ready', 'encoded', 'success'].includes(value)) return 'ready';
-    if (['5', '6', 'failed', 'error', 'encoding failed', 'uploadfailed'].includes(value.replace(/\s+/g, ''))) return 'failed';
-    if (['0', '1', '2', '3', 'created', 'uploaded', 'processing', 'encoding', 'transcoding'].includes(value)) return 'processing';
-    return value || 'processing';
-  };
-
   const resetLessonForm = () => {
     setNewLesson({
       title: "",
@@ -1133,36 +1125,22 @@ const AdminDashboard = ({
 
           let notificationResult = null;
           let notificationError = null;
-          const bunnyStatus = normalizeBunnyStatus(payload.bunnyStatus);
-          const shouldDelayNotification = payload.videoKind === 'bunny' && payload.bunnyVideoId && bunnyStatus !== 'ready';
-          if (shouldDelayNotification) {
-            notificationResult = {
-              sent: 0,
-              failed: 0,
-              delayedForBunny: true,
-              message: 'تم حفظ المحاضرة بدون إشعار لأن فيديو Bunny لم يجهز بعد.',
-            };
-          } else {
-            try {
-              notificationResult = await sendPushNotification({
-                title: "محاضرة جديدة",
-                body: `تم رفع فيديو: ${payload.title}`,
-                year: payload.year,
-                lessonId: lessonRef.id,
-                lessonTitle: payload.title,
-                lesson: {
-                  ...payload,
-                  id: lessonRef.id,
-                },
-              });
-            } catch (error) {
-              notificationError = error;
-              console.error("Automatic lesson notification failed:", error);
-            }
+          try {
+            notificationResult = await sendPushNotification({
+              title: "محاضرة جديدة",
+              body: `تم رفع فيديو: ${payload.title}`,
+              year: payload.year,
+              lessonId: lessonRef.id,
+              lessonTitle: payload.title,
+              lesson: { ...payload, id: lessonRef.id },
+            });
+          } catch (error) {
+            notificationError = error;
+            console.error("Automatic lesson notification failed:", error);
           }
           const hasNotificationError = notificationError || notificationResult?.error;
           const hasFailedNotifications = !hasNotificationError && (notificationResult?.failed || 0) > 0;
-          const hasNoNotificationTargets = !notificationResult?.delayedForBunny && !hasNotificationError && !hasFailedNotifications && (notificationResult?.sent || 0) === 0;
+          const hasNoNotificationTargets = !hasNotificationError && !hasFailedNotifications && (notificationResult?.sent || 0) === 0;
           const noNotificationTargetsMessage = notificationResult?.message || buildPushEmptyMessage({
             ...(notificationResult?.stats || {}),
             targetYear: payload.year,
@@ -1170,17 +1148,15 @@ const AdminDashboard = ({
 
           resetLessonForm();
           Swal.fire({
-            icon: hasNotificationError || hasFailedNotifications || hasNoNotificationTargets || notificationResult?.delayedForBunny ? "warning" : "success",
-            title: notificationResult?.delayedForBunny ? "تم حفظ المحاضرة بدون إشعار" : "تم نشر المحاضرة بنجاح",
+            icon: hasNotificationError || hasFailedNotifications || hasNoNotificationTargets ? "warning" : "success",
+            title: "تم نشر المحاضرة بنجاح",
             text: hasNotificationError
-              ? "تم حفظ المحاضرة، لكن تعذر إرسال الإشعارات الآن. حاول مرة أخرى لاحقاً أو راجع الاتصال."
+              ? "تم حفظ المحاضرة، لكن تعذر إرسال الإشعارات الآن. راجع الاتصال وحاول مرة أخرى."
               : hasFailedNotifications
                 ? (notificationResult?.message || "تم حفظ المحاضرة، لكن فشل إرسال الإشعار لبعض الأجهزة.")
-              : hasNoNotificationTargets
-                ? noNotificationTargetsMessage
-              : notificationResult?.delayedForBunny
-                ? "الفيديو لسه Processing على Bunny. حدّث الحالة بعد شوية، وابعت الإشعار لما يبقى جاهز."
-              : `تم إرسال الإشعارات مباشرة إلى ${notificationResult?.sent || 0} جهاز${notificationResult?.failed ? `، وفشل ${notificationResult.failed}` : ""}.`,
+                : hasNoNotificationTargets
+                  ? noNotificationTargetsMessage
+                  : `تم إرسال الإشعارات مباشرة إلى ${notificationResult?.sent || 0} جهاز.`,
             background: theme.surface,
             color: theme.text,
           });
