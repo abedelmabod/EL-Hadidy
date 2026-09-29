@@ -1550,6 +1550,7 @@ const AdminDashboard = ({
       : "د. الحديدي  أكواد التفعيل";
 
     const fileName = `${sheetTitle.replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").trim()}.pdf`;
+    const rowsPerPage = 22;
     const wrapper = document.createElement("div");
     wrapper.dir = "rtl";
     wrapper.innerHTML = `
@@ -1558,13 +1559,7 @@ const AdminDashboard = ({
           <thead>
             <tr><th colspan="3">${escapeHtml(sheetTitle)}</th></tr>
           </thead>
-          <tbody>
-            ${rows.map((row) => `
-              <tr>
-                ${[0, 1, 2].map((cellIndex) => `<td class="${row[cellIndex] ? "" : "empty-cell"}">${escapeHtml(row[cellIndex] || "0")}</td>`).join("")}
-              </tr>
-            `).join("")}
-          </tbody>
+          <tbody></tbody>
         </table>
       </div>
     `;
@@ -1582,7 +1577,7 @@ const AdminDashboard = ({
     style.textContent = `
       .codes-pdf-page {
         width: 794px;
-        min-height: 1123px;
+        height: 1123px;
         background: #ffffff;
         color: #000000;
         display: flex;
@@ -1600,7 +1595,7 @@ const AdminDashboard = ({
       }
       .codes-pdf-page th {
         border: 1.6px solid #111;
-        height: 39px;
+        height: 42px;
         font-size: 23px;
         font-weight: 500;
         text-align: center;
@@ -1609,15 +1604,15 @@ const AdminDashboard = ({
       }
       .codes-pdf-page td {
         border: 1.4px solid #111;
-        height: 34px;
+        height: 44px;
         text-align: center;
         vertical-align: middle;
-        font-size: 28px;
-        line-height: 1;
-        font-weight: 900;
+        font-size: 25px;
+        line-height: 1.2;
+        font-weight: 800;
         letter-spacing: 0.2px;
         direction: ltr;
-        padding: 2px 8px;
+        padding: 4px 8px;
       }
       .codes-pdf-page .empty-cell { color: transparent; }
     `;
@@ -1631,24 +1626,36 @@ const AdminDashboard = ({
       const pdfPage = wrapper.querySelector(".codes-pdf-page");
       if (!pdfPage) throw new Error("تعذر تجهيز صفحة الأكواد للتصدير");
 
-      const html2pdf = (await import("html2pdf.js")).default;
-      await html2pdf()
-        .set({
-          margin: 0,
-          filename: fileName,
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: "#ffffff",
-            scrollX: 0,
-            scrollY: 0,
-            logging: false,
-          },
-          jsPDF: { unit: "px", format: [794, 1123], orientation: "portrait" },
-        })
-        .from(pdfPage)
-        .save();
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
+      const pdf = new jsPDF({ unit: "px", format: [794, 1123], orientation: "portrait", hotfixes: ["px_scaling"] });
+      const tbody = pdfPage.querySelector("tbody");
+
+      for (let start = 0; start < rows.length; start += rowsPerPage) {
+        tbody.innerHTML = rows.slice(start, start + rowsPerPage).map((row) => `
+          <tr>
+            ${[0, 1, 2].map((cellIndex) => `<td class="${row[cellIndex] ? "" : "empty-cell"}">${escapeHtml(row[cellIndex] || "0")}</td>`).join("")}
+          </tr>
+        `).join("");
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+
+        const canvas = await html2canvas(pdfPage, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: "#ffffff",
+          scrollX: 0,
+          scrollY: 0,
+          logging: false,
+        });
+        if (start > 0) pdf.addPage();
+        pdf.addImage(canvas.toDataURL("image/jpeg", 0.98), "JPEG", 0, 0, 794, 1123);
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+
+      pdf.save(fileName);
       Swal.fire({ icon: "success", title: "تم تحميل ملف PDF", text: fileName, background: theme.surface, color: theme.text });
     } catch (error) {
       Swal.fire({ icon: "error", title: "تعذر تحميل PDF", text: "حاول مرة أخرى أو استخدم متصفح حديث.", background: theme.surface, color: theme.text });
