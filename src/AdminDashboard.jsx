@@ -3491,8 +3491,9 @@ const AdminDashboard = ({
         .content-breadcrumbs button.active { background: ${theme.accent}; border-color: ${theme.accent}; color: ${theme.buttonText}; }
         .content-screen { display: grid; gap: 14px; animation: contentSlide 0.22s ease both; }
         @keyframes contentSlide { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
-        .content-subject-grid, .content-chapter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-        .content-subject-card, .content-chapter-card { background: ${theme.surfaceAlt}; border: 1.5px solid ${visibleBorder}; border-radius: 18px; padding: 12px; display: grid; gap: 10px; transition: 0.18s ease; overflow: hidden; }
+        .content-subject-grid, .content-chapter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+        .content-subject-card, .content-chapter-card { min-width: 0; background: ${theme.surfaceAlt}; border: 1.5px solid ${visibleBorder}; border-radius: 18px; padding: 12px; display: grid; gap: 10px; transition: 0.18s ease; overflow: hidden; }
+        .content-chapter-card { container-type: inline-size; }
         .content-subject-card:hover, .content-chapter-card:hover { border-color: ${theme.accent}66; transform: translateY(-1px); box-shadow: 0 12px 24px ${theme.accent}12; }
         .legacy-chapter-card { border-style: dashed; background: linear-gradient(135deg, ${theme.surfaceAlt}, ${theme.info}0F); }
         .legacy-chapter-card .chapter-select-btn span { background: ${theme.info}16; color: ${theme.info}; border-color: ${theme.info}33; }
@@ -3688,7 +3689,12 @@ const AdminDashboard = ({
         .course-actions, .chapter-actions, .lesson-actions, .form-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
         .content-chapter-card .chapter-actions { opacity: 0.68; transform: translateY(3px); transition: 0.18s ease; }
         .content-chapter-card:hover .chapter-actions, .content-chapter-card:focus-within .chapter-actions { opacity: 1; transform: translateY(0); }
-        .chapter-actions.compact-actions { display: grid; grid-template-columns: repeat(2, 38px) minmax(108px, 1fr) repeat(2, 38px); gap: 7px; align-items: center; }
+        .chapter-actions.compact-actions { display: grid; min-width: 0; grid-template-columns: repeat(2, 38px) minmax(108px, 1fr) repeat(2, 38px); gap: 7px; align-items: center; }
+        @container (max-width: 320px) {
+          .chapter-actions.compact-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); opacity: 1; transform: none; }
+          .chapter-actions.compact-actions .btn-action { grid-column: 1 / -1; width: 100%; }
+          .chapter-actions.compact-actions .icon-btn { width: 100%; }
+        }
         .chapter-actions .btn-action { min-height: 38px; padding: 7px 10px; font-size: 12px; }
         .icon-btn { border: 1px solid ${theme.borderSoft}; background: ${theme.surfaceAlt}; color: ${theme.text}; width: 38px; height: 38px; border-radius: 12px; cursor: pointer; display: inline-grid; place-items: center; transition: 0.2s ease; }
         .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -3775,7 +3781,7 @@ const AdminDashboard = ({
         .subject-drilldown { display: grid; gap: 12px; padding: 12px; border-radius: 16px; background: ${theme.surface}; border: 1.5px solid ${visibleBorder}; }
         .chapter-chip-list { display: grid; gap: 10px; }
         .chapter-drilldown { display: grid; gap: 10px; }
-        .chapter-select-btn { width: 100%; border: 1.5px solid ${visibleBorder}; background: ${theme.surfaceAlt}; color: ${theme.text}; border-radius: 15px; padding: 12px; display: grid; grid-template-columns: 38px 1fr auto 30px; gap: 10px; align-items: center; text-align: right; cursor: pointer; font-family: 'Cairo'; transition: 0.18s ease; }
+        .chapter-select-btn { width: 100%; min-width: 0; border: 1.5px solid ${visibleBorder}; background: ${theme.surfaceAlt}; color: ${theme.text}; border-radius: 15px; padding: 12px; display: grid; grid-template-columns: 38px minmax(0, 1fr) auto 30px; gap: 10px; align-items: center; text-align: right; cursor: pointer; font-family: 'Cairo'; transition: 0.18s ease; }
         .chapter-drilldown.active .chapter-select-btn, .chapter-select-btn:hover { border-color: ${theme.accent}; background: ${theme.accent}12; }
         .chapter-select-btn span { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: ${theme.accent}14; color: ${theme.accent}; }
         .chapter-select-btn strong { color: ${theme.text}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3996,7 +4002,7 @@ const AdminDashboard = ({
           .content-modal-head { align-items: flex-start; padding-inline-start: 48px; }
           .modal-chapter-row { flex-direction: column; }
           .modal-chapter-row .chapter-actions { width: 100%; }
-          .chapter-select-btn { grid-template-columns: 38px 1fr 30px; }
+          .chapter-select-btn { grid-template-columns: 38px minmax(0, 1fr) 30px; }
           .chapter-select-btn small { grid-column: 2 / 3; }
           .chapter-video-card { grid-template-columns: 44px 1fr; }
           .chapter-videos-head { position: static; }
