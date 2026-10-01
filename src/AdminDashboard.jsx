@@ -3,6 +3,7 @@ import { db } from './firebase';
 import { collection, addDoc, doc, updateDoc, deleteDoc, writeBatch, getDocs, query, where, serverTimestamp, onSnapshot } from "firebase/firestore";
 import Swal from 'sweetalert2'; 
 import ThemeToggle from './ThemeToggle';
+import QuizAdmin from './QuizAdmin';
 import { keepEnglishDigitsOnly } from './services/auth-service';
 
 const AdminDashboard = ({ 
@@ -823,28 +824,35 @@ const AdminDashboard = ({
     }
   };
 
-  const buildRevokedStudentAccess = (student = {}, revokedYear = "", revokedCode = "") => {
-    const nextAccessYears = Array.isArray(student.accessYears)
-      ? student.accessYears.filter((year) => year !== revokedYear)
-      : [];
-    const nextUsedCodes = Array.isArray(student.usedCodes)
-      ? student.usedCodes.filter((code) => code !== revokedCode)
-      : [];
-    const hasAccess = nextAccessYears.length > 0;
+  const isCodePaused = (code = {}) =>
+    code.isActive === false || code.disabled === true || code.revoked === true || code.isStopped === true;
 
+  const codeBelongsToStudent = (code, student) =>
+    (code.usedById && code.usedById === student.id) ||
+    (code.isUsed !== false && [student.usedCode, ...(Array.isArray(student.usedCodes) ? student.usedCodes : [])].includes(code.code));
+
+  const buildStudentCodeAccess = (student, codes) => {
+    const linkedCodes = codes.filter((code) => codeBelongsToStudent(code, student));
+    const activeYears = [...new Set(linkedCodes
+      .filter((code) => code.isUsed !== false && !isCodePaused(code))
+      .map((code) => code.year || code.accessYear || code.codeYear)
+      .filter(Boolean))];
+    const usedCodes = [...new Set(linkedCodes.map((code) => code.code).filter(Boolean))];
     return {
-      isSubscribed: hasAccess,
-      accessYears: nextAccessYears,
-      usedCodes: nextUsedCodes,
-      accessYear: hasAccess ? nextAccessYears[0] : "",
-      codeYear: hasAccess ? nextAccessYears[0] : "",
-      usedCode: nextUsedCodes[0] || "",
-      codeReviewStatus: hasAccess ? "approved" : "",
+      isSubscribed: activeYears.length > 0,
+      accessYears: activeYears,
+      accessYear: activeYears[0] || "",
+      codeYear: activeYears[0] || "",
+      usedCodes,
+      usedCode: usedCodes[0] || "",
+      codeReviewStatus: activeYears.length ? "approved" : "",
     };
   };
 
-  const isCodePaused = (code = {}) =>
-    code.isActive === false || code.disabled === true || code.revoked === true || code.isStopped === true;
+  const syncAffectedStudents = (batch, affectedCodes, nextCodes) => {
+    studentsDB.filter((student) => affectedCodes.some((code) => codeBelongsToStudent(code, student)))
+      .forEach((student) => batch.update(doc(db, "students", student.id), buildStudentCodeAccess(student, nextCodes)));
+  };
 
   const getCodeStatus = (code = {}) => {
     if (isCodePaused(code)) return "paused";
@@ -853,26 +861,23 @@ const AdminDashboard = ({
   };
 
   const updateSingleCodePaused = async (code, shouldPause) => {
-    await updateDoc(doc(db, "codes", code.id), {
+    const batch = writeBatch(db);
+    batch.update(doc(db, "codes", code.id), {
       isActive: !shouldPause,
       pausedAt: shouldPause ? serverTimestamp() : null,
       pausedBy: shouldPause ? "admin" : "",
     });
+    syncAffectedStudents(batch, [code], codesDB.map((item) => item.id === code.id ? { ...item, isActive: !shouldPause } : item));
+    await batch.commit();
     Swal.fire({ icon: 'success', title: shouldPause ? 'تم إيقاف الكود مؤقتاً' : 'تم تفعيل الكود', background: theme.surface, color: theme.text });
   };
 
   const handleDeleteSingleCode = async (codeId, usedById) => {
     confirmAction('حذف الكود؟', 'سيتم إلغاء تفعيل الطالب المرتبط بهذا الكود فوراً.', async () => {
       const batch = writeBatch(db);
-      const codeData = codesDB.find((code) => code.id === codeId) || {};
-      const linkedStudent = usedById ? studentsDB.find((student) => student.id === usedById) : null;
+      const codeData = codesDB.find((code) => code.id === codeId) || { id: codeId, usedById };
       batch.delete(doc(db, "codes", codeId));
-      if (usedById) {
-        batch.update(
-          doc(db, "students", usedById),
-          buildRevokedStudentAccess(linkedStudent || {}, codeData.year || "", codeData.code || "")
-        );
-      }
+      syncAffectedStudents(batch, [codeData], codesDB.filter((item) => item.id !== codeId));
       await batch.commit();
       Swal.fire({ icon: 'success', title: 'تم الحذف والإلغاء', background: theme.surface, color: theme.text });
     }, true);
@@ -881,22 +886,31 @@ const AdminDashboard = ({
   const deleteAllCodes = async () => {
     confirmAction('تطهير شامل للنظام؟', 'سيتم حذف كافة الأكواد نهائياً وإلغاء تفعيل اشتراك جميع الطلاب.', async () => {
         try {
-          const batch = writeBatch(db);
           const codesSnapshot = await getDocs(collection(db, "codes"));
-          codesSnapshot.forEach((d) => batch.delete(doc(db, "codes", d.id)));
           const studentsSnapshot = await getDocs(collection(db, "students"));
-          studentsSnapshot.forEach((s) => {
-            batch.update(doc(db, "students", s.id), {
-              isSubscribed: false,
-              usedCode: "",
-              usedCodes: [],
-              codeYear: "",
-              accessYear: "",
-              accessYears: [],
-              codeReviewStatus: "",
+          const changes = [
+            ...studentsSnapshot.docs.map((s) => ({ type: 'student', id: s.id })),
+            ...codesSnapshot.docs.map((code) => ({ type: 'code', id: code.id })),
+          ];
+          for (let index = 0; index < changes.length; index += 400) {
+            const batch = writeBatch(db);
+            changes.slice(index, index + 400).forEach((change) => {
+              if (change.type === 'code') {
+                batch.delete(doc(db, 'codes', change.id));
+                return;
+              }
+              batch.update(doc(db, 'students', change.id), {
+                isSubscribed: false,
+                usedCode: "",
+                usedCodes: [],
+                codeYear: "",
+                accessYear: "",
+                accessYears: [],
+                codeReviewStatus: "",
+              });
             });
-          });
-          await batch.commit();
+            await batch.commit();
+          }
           Swal.fire({ icon: 'success', title: 'تم التطهير بنجاح!', background: theme.surface, color: theme.text });
         } catch (e) { Swal.fire({ icon: 'error', title: 'فشلت العملية', background: theme.surface, color: theme.text }); }
       }, true);
@@ -1712,6 +1726,8 @@ const AdminDashboard = ({
             pausedBy: shouldPause ? "admin" : "",
           });
         });
+        const selectedIds = new Set(selectedCodes.map((code) => code.id));
+        syncAffectedStudents(batch, selectedCodes, codesDB.map((code) => selectedIds.has(code.id) ? { ...code, isActive: !shouldPause } : code));
         await batch.commit();
         clearSelectedCodes();
         Swal.fire({ icon: 'success', title: shouldPause ? 'تم إيقاف الأكواد المحددة' : 'تم تفعيل الأكواد المحددة', background: theme.surface, color: theme.text });
@@ -1727,14 +1743,9 @@ const AdminDashboard = ({
       const batch = writeBatch(db);
       selectedCodes.forEach((code) => {
         batch.delete(doc(db, "codes", code.id));
-        if (code.usedById) {
-          const linkedStudent = studentsDB.find((student) => student.id === code.usedById);
-          batch.update(
-            doc(db, "students", code.usedById),
-            buildRevokedStudentAccess(linkedStudent || {}, code.year || "", code.code || "")
-          );
-        }
       });
+      const selectedIds = new Set(selectedCodes.map((code) => code.id));
+      syncAffectedStudents(batch, selectedCodes, codesDB.filter((code) => !selectedIds.has(code.id)));
       await batch.commit();
       clearSelectedCodes();
       Swal.fire({ icon: 'success', title: 'تم حذف الأكواد المحددة', background: theme.surface, color: theme.text });
@@ -1895,6 +1906,7 @@ const AdminDashboard = ({
     { id: 'content', icon: 'fa-layer-group', label: 'المحتوى' },
     { id: 'students', icon: 'fa-users', label: 'الطلاب' },
     { id: 'notifications', icon: 'fa-bell', label: 'الإشعارات' },
+    { id: 'quizzes', icon: 'fa-clipboard-check', label: 'الاختبارات' },
     { id: 'codes', icon: 'fa-ticket-alt', label: 'الأكواد' },
     { id: 'support_requests', icon: 'fa-headset', label: 'طلبات الدعم', badge: pendingSupportRequests.length },
     { id: 'logs', icon: 'fa-shield-alt', label: 'الرقابة' },
@@ -1907,6 +1919,7 @@ const AdminDashboard = ({
     add_lesson: { title: 'إضافة محاضرة', subtitle: 'رفع محتوى جديد مباشرة إلى المنصة' },
     students: { title: 'الطلاب', subtitle: 'بحث، مراجعة، وحظر أو تفعيل الحسابات' },
     notifications: { title: 'إرسال إشعار', subtitle: 'رسالة مباشرة لأجهزة الطلاب المسجلة في التطبيق' },
+    quizzes: { title: 'الاختبارات', subtitle: 'اختبارات المحاضرات والمراجعة المتباعدة' },
     codes: { title: 'الأكواد', subtitle: 'توليد الأكواد وتصديرها ومراجعة الاستخدام' },
     support_requests: { title: 'طلبات الدعم', subtitle: 'طلبات تصفير الجهاز ومشاكل المحتوى والحساب القادمة من التطبيق' },
     logs: { title: 'الرقابة', subtitle: 'سجل الحماية والتنبيهات الأمنية' },
@@ -2282,6 +2295,8 @@ const AdminDashboard = ({
             </div>
           </div>
         )}
+
+        {activeTab === 'quizzes' && <QuizAdmin lessons={lessons} theme={theme} />}
 
         {activeTab === 'notifications' && (
           <form className="notification-compose fade-in" onSubmit={sendAnnouncement}>

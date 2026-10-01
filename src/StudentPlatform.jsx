@@ -197,6 +197,9 @@ const StudentPlatform = ({ user, setUser, lessons, announcement, theme, themeMod
 
       const codeDoc = querySnapshot.docs[0];
       const codeData = codeDoc.data();
+      if (codeData.isActive === false || codeData.disabled === true || codeData.revoked === true || codeData.isStopped === true) {
+        throw new Error('هذا الكود متوقف حالياً.');
+      }
       const accessYear = codeData.year || studentDetails?.year || user.year;
       const batch = writeBatch(db);
 
@@ -205,6 +208,8 @@ const StudentPlatform = ({ user, setUser, lessons, announcement, theme, themeMod
         usedCode: cleanCode,
         accessYear,
         codeYear: accessYear,
+        accessYears: uniqByNormalized([...(Array.isArray(studentDetails?.accessYears) ? studentDetails.accessYears : []), accessYear]),
+        usedCodes: [...new Set([...(Array.isArray(studentDetails?.usedCodes) ? studentDetails.usedCodes : []), cleanCode])],
         pendingCode: "",
         codeReviewStatus: "approved",
       });
@@ -241,15 +246,23 @@ const StudentPlatform = ({ user, setUser, lessons, announcement, theme, themeMod
   };
 
   const accessYears = uniqByNormalized(
-    Array.isArray(studentDetails?.accessYears) && studentDetails.accessYears.length
+    Array.isArray(studentDetails?.accessYears)
       ? studentDetails.accessYears
-      : [studentDetails?.accessYear, studentDetails?.codeYear, studentDetails?.year].filter(Boolean)
+      : (studentDetails?.isSubscribed
+        ? [studentDetails?.accessYear, studentDetails?.codeYear].filter(Boolean)
+        : [])
   );
   const accessYearKeys = new Set(accessYears.map((year) => normalizeYear(year)));
   const activeAccessYear = accessYears[0] || studentDetails?.year;
   const studentLessons = sortLessonsByNewest(lessons.filter(
     (lesson) => accessYearKeys.has(normalizeYear(lesson.year)) && lesson.isActive !== false
   ));
+  useEffect(() => {
+    if (selectedVideo && studentDetails && !accessYearKeys.has(normalizeYear(selectedVideo.year))) {
+      setSelectedVideo(null);
+      setSelectedVideoUrl('');
+    }
+  }, [selectedVideo, studentDetails, studentDetails?.accessYears, studentDetails?.isSubscribed]);
   const chaptersBySubject = (() => {
     const grouped = {};
     chapters.forEach((chapter) => {
