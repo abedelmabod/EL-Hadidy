@@ -997,6 +997,7 @@ const AdminDashboard = ({
     await updateDoc(doc(db, "students", student.id), {
       allowScreenshots: nextValue,
       screenshotAllowed: nextValue,
+      canTakeScreenshots: nextValue,
       screenshotPermissionUpdatedAt: serverTimestamp(),
     });
 
