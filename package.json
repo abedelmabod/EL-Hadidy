@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test:quiz": "node --test api/*.test.js",
+    "test:quiz": "node --test tests/*.test.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activeCodeGrantsAccess, gradeAnswers, normalizeYear, publicQuestions, reviewSchedule, validateQuizInput } from './_quiz-domain.js';
+import { activeCodeGrantsAccess, gradeAnswers, normalizeYear, publicQuestions, reviewSchedule, validateQuizInput } from '../api/_quiz-domain.js';
 
 test('year normalization accepts Arabic variants', () => {
   assert.equal(normalizeYear('الفرقة الأولى'), normalizeYear('الفرقه الاولي'));

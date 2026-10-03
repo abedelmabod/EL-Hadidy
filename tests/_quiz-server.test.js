@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import process from 'node:process';
-import { getDatabase } from './_quiz-server.js';
-import { handleAdminPost, handleGet, handleStudentPost } from './quizzes.js';
+import { getDatabase } from '../api/_quiz-server.js';
+import { handleAdminPost, handleGet, handleStudentPost } from '../api/_quiz-handler.js';
 
 const snapshot = (id, data) => ({ id, exists: !!data, data: () => data });
 const makeIdentity = (uid) => ({

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import handler from './quizzes.js';
+import handler from '../api/quizzes.js';
 
 function response() {
   return {
