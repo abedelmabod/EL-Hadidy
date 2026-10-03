@@ -115,6 +115,7 @@ function App() {
   if (user.role === 'admin') {
     return (
       <AdminDashboard 
+        user={user}
         theme={theme}
         themeMode={themeMode}
         toggleTheme={toggleTheme}

@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import {
   createUserWithEmailAndPassword,
+  deleteUser,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
@@ -107,7 +108,7 @@ async function findUserByUid(db, uid) {
   for (const collectionConfig of ROLE_COLLECTIONS) {
     const directDoc = await getDoc(doc(db, collectionConfig.name, uid));
 
-    if (directDoc.exists()) {
+    if (directDoc.exists() && (!directDoc.data().authUid || directDoc.data().authUid === uid)) {
       return {
         id: directDoc.id,
         role: collectionConfig.role,
@@ -137,6 +138,7 @@ function shouldFallbackToLegacy(profile, error) {
 
   return (
     !code ||
+    code === 'ADMIN_AUTH_LINK_FAILED' ||
     code === "auth/user-not-found" ||
     code === "auth/invalid-email" ||
     code === "auth/invalid-credential"
@@ -261,16 +263,42 @@ export async function signInWithSharedCredentials(services, payload) {
   }
 
   const legacyProfile = await findUserByIdentifier(db, identifier);
+  const authEmail = legacyProfile?.role === 'admin' && legacyProfile.data.email
+    ? String(legacyProfile.data.email).trim()
+    : buildAuthEmail(identifier);
 
   try {
     const credential = await signInWithEmailAndPassword(
       auth,
-      buildAuthEmail(identifier),
+      authEmail,
       password
     );
 
-    const resolvedProfile =
-      (await findUserByUid(db, credential.user.uid)) || legacyProfile;
+    let resolvedProfile = await findUserByUid(db, credential.user.uid);
+    if (legacyProfile?.role === 'admin' && resolvedProfile && resolvedProfile.role !== 'admin') {
+      throw new SharedAuthError('ADMIN_AUTH_MISMATCH', 'هذا البريد مرتبط بحساب غير حساب المدير.');
+    }
+    if (!resolvedProfile && legacyProfile?.role === 'admin') {
+      if (legacyProfile.data.authUid && legacyProfile.data.authUid !== credential.user.uid) {
+        throw new SharedAuthError('ADMIN_AUTH_MISMATCH', 'حساب المدير مرتبط بمعرّف Firebase آخر. راجع إعدادات الحساب.');
+      }
+      if (String(legacyProfile.data.password) !== password) {
+        throw new SharedAuthError('INVALID_CREDENTIALS', 'اسم المستخدم أو كلمة المرور غير صحيحة.');
+      }
+      try {
+        await updateDoc(doc(db, 'admins', legacyProfile.id), {
+          authUid: credential.user.uid,
+          email: credential.user.email,
+        });
+      } catch {
+        throw new SharedAuthError('ADMIN_AUTH_LINK_FAILED', 'تعذر ربط حساب المدير بمستند Firebase.');
+      }
+      resolvedProfile = {
+        ...legacyProfile,
+        data: { ...legacyProfile.data, authUid: credential.user.uid, email: credential.user.email },
+      };
+    }
+    resolvedProfile ||= legacyProfile;
 
     if (!resolvedProfile) {
       throw new SharedAuthError(
@@ -299,18 +327,51 @@ export async function signInWithSharedCredentials(services, payload) {
       shouldFallbackToLegacy(legacyProfile, error) &&
       String(legacyProfile.data.password) === password
     ) {
+      let quizAuthError = '';
+      if (error?.code === 'ADMIN_AUTH_LINK_FAILED') {
+        quizAuthError = 'تعذر ربط حساب المدير بمستند Firebase. راجع صلاحيات الكتابة في Firestore.';
+      } else if (legacyProfile.role === 'admin' && !legacyProfile.data.authUid) {
+        let newCredential;
+        try {
+          newCredential = await createUserWithEmailAndPassword(auth, authEmail, password);
+          await updateDoc(doc(db, 'admins', legacyProfile.id), {
+            authUid: newCredential.user.uid,
+            email: newCredential.user.email,
+          });
+          return {
+            authMode: 'firebase',
+            user: buildSessionUser(legacyProfile.id, 'admin', {
+              ...legacyProfile.data,
+              authUid: newCredential.user.uid,
+            }, newCredential.user),
+          };
+        } catch (linkError) {
+          if (newCredential) {
+            await deleteUser(newCredential.user).catch(() => signOut(auth).catch(() => null));
+          }
+          quizAuthError = linkError?.code === 'auth/email-already-in-use'
+            ? 'هذا البريد موجود في Firebase Auth بكلمة مرور مختلفة. يلزم إعادة ضبط كلمة مروره ثم تسجيل الدخول من جديد.'
+            : 'تعذر ربط حساب المدير بـFirebase Auth تلقائيًا. راجع صلاحيات Firebase وكلمة مرور الحساب.';
+        }
+      } else if (legacyProfile.role === 'admin') {
+        quizAuthError = 'حساب المدير مرتبط بـFirebase Auth لكن تسجيل الدخول إليه فشل. راجع كلمة المرور أو أعد ضبطها.';
+      }
       const resolvedData =
         legacyProfile.role === "student"
           ? await ensureStudentAccess(db, legacyProfile, device)
           : legacyProfile.data;
 
+      if (legacyProfile.role === 'admin' && auth.currentUser) {
+        await signOut(auth).catch(() => null);
+      }
+
       return {
         authMode: "legacy",
-        user: buildSessionUser(
+        user: { ...buildSessionUser(
           legacyProfile.id,
           legacyProfile.role,
           resolvedData
-        ),
+        ), ...(quizAuthError ? { quizAuthError } : {}) },
       };
     }
 

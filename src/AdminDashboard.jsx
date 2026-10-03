@@ -8,7 +8,7 @@ import { keepEnglishDigitsOnly } from './services/auth-service';
 
 const AdminDashboard = ({ 
   activeTab, setActiveTab, studentsDB = [], lessons = [], codesDB = [], logsDB = [], supportRequests = [],
-  setUser, setLessons, newLesson, setNewLesson, subjects = [], theme, themeMode, toggleTheme
+  user, setUser, setLessons, newLesson, setNewLesson, subjects = [], theme, themeMode, toggleTheme
 }) => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -2297,7 +2297,7 @@ const AdminDashboard = ({
           </div>
         )}
 
-        {activeTab === 'quizzes' && <QuizAdmin lessons={lessons} theme={theme} />}
+        {activeTab === 'quizzes' && <QuizAdmin lessons={lessons} subjects={subjects} chapters={chapters} stageGroups={stageGroups} isSameYear={isSameYear} authError={user?.quizAuthError} theme={theme} />}
 
         {activeTab === 'notifications' && (
           <form className="notification-compose fade-in" onSubmit={sendAnnouncement}>

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import process from 'node:process';
-import { getDatabase } from '../api/_quiz-server.js';
+import { getDatabase, requireAdmin } from '../api/_quiz-server.js';
 import { handleAdminPost, handleGet, handleStudentPost } from '../api/quizzes.js';
 
 const snapshot = (id, data) => ({ id, exists: !!data, data: () => data });
@@ -25,6 +25,28 @@ const makeIdentity = (uid) => ({
       };
     },
   },
+});
+
+test('admin access accepts a linked Firebase UID and rejects a mismatched one', async () => {
+  const linked = {
+    uid: 'firebase-admin-1',
+    store: { collection: () => ({
+      doc: () => ({ get: async () => snapshot('firebase-admin-1', null) }),
+      where: () => ({ limit() { return this; }, get: async () => ({
+        empty: false, docs: [snapshot('legacy-admin-doc', { authUid: 'firebase-admin-1' })],
+      }) }),
+    }) },
+  };
+  assert.equal((await requireAdmin(linked)).id, 'legacy-admin-doc');
+
+  const mismatched = {
+    uid: 'firebase-admin-1',
+    store: { collection: () => ({
+      doc: () => ({ get: async () => snapshot('firebase-admin-1', { authUid: 'someone-else' }) }),
+      where: () => ({ limit() { return this; }, get: async () => ({ empty: true, docs: [] }) }),
+    }) },
+  };
+  await assert.rejects(() => requireAdmin(mismatched), { status: 403 });
 });
 
 test('quiz schema initializes in a local SQLite database', async () => {

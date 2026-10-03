@@ -4,12 +4,22 @@
 .qa-heading h2, .qa-editor h3 { margin: 0 0 5px; }
 .qa-heading p, .qa-editor-head p, .qa-muted { margin: 0; color: var(--qa-muted); }
 .qa-heading > span { border: 1px solid var(--qa-border); padding: 8px 12px; border-radius: 8px; }
-.qa-layout { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.qa-layout { display: grid; grid-template-columns: minmax(280px, 330px) minmax(0, 1fr); gap: 18px; align-items: start; }
 .qa-lessons, .qa-editor { border: 1px solid var(--qa-border); border-radius: 8px; background: var(--qa-surface); padding: 16px; min-width: 0; }
+.qa-lessons { display: grid; gap: 10px; }
+.qa-step { display: flex; align-items: center; gap: 9px; margin-top: 5px; }
+.qa-step span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: color-mix(in srgb, var(--qa-accent) 18%, transparent); color: var(--qa-accent); font-size: 12px; font-weight: 800; }
+.qa-choice-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.qa-choice-row button { min-height: 46px; padding: 8px; border: 1px solid var(--qa-border); border-radius: 6px; background: transparent; color: var(--qa-text); font: inherit; font-weight: 700; cursor: pointer; }
+.qa-choice-row button.selected { border-color: var(--qa-accent); background: color-mix(in srgb, var(--qa-accent) 14%, transparent); }
+.qa-select-label { color: var(--qa-muted); }
+.qa-shell select:disabled, .qa-shell input:disabled { opacity: .58; cursor: not-allowed; }
+.qa-path { color: var(--qa-muted); font-size: 12px; margin-bottom: 7px; line-height: 1.7; overflow-wrap: anywhere; }
+.qa-path span { color: var(--qa-accent); margin-inline: 4px; }
 .qa-shell label { display: grid; gap: 7px; font-weight: 700; font-size: 13px; }
 .qa-shell input, .qa-shell textarea, .qa-shell select { width: 100%; box-sizing: border-box; border: 1px solid var(--qa-border); border-radius: 6px; background: var(--qa-surface); color: var(--qa-text); padding: 10px 12px; font: inherit; }
 .qa-shell input:focus-visible, .qa-shell textarea:focus-visible, .qa-shell select:focus-visible, .qa-shell button:focus-visible { outline: 2px solid var(--qa-accent); outline-offset: 2px; }
-.qa-lesson-list { display: grid; gap: 6px; max-height: 65vh; overflow-y: auto; margin-top: 12px; }
+.qa-lesson-list { display: grid; gap: 6px; max-height: 300px; overflow-y: auto; }
 .qa-lesson-list button { display: grid; text-align: right; gap: 5px; background: transparent; color: var(--qa-text); border: 1px solid var(--qa-border); border-radius: 6px; padding: 10px; cursor: pointer; }
 .qa-lesson-list button.selected { border-color: var(--qa-accent); background: color-mix(in srgb, var(--qa-accent) 12%, transparent); }
 .qa-lesson-list small { color: var(--qa-muted); }

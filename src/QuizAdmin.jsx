@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { auth } from './firebase';
+import { getQuizChapters, getQuizSubjects, getQuizVideos } from './quiz-content';
 import './QuizAdmin.css';
 
 const emptyQuestion = () => ({ prompt: '', options: ['', '', '', ''], answerIndex: 0, explanation: '' });
 
 async function quizRequest(path, body) {
   const token = await auth.currentUser?.getIdToken();
-  if (!token) throw new Error('إدارة الاختبارات تتطلب حساب مدير مرتبطًا بـFirebase Auth. سجّل الدخول بهذا الحساب.');
+  if (!token) throw new Error('حساب المدير الحالي يحتاج ربطًا بـFirebase Auth. سجّل الخروج وادخل مجددًا ثم افتح الاختبارات.');
   const response = await fetch(`/api/quizzes${path}`, {
     method: body ? 'POST' : 'GET',
     headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -17,8 +18,12 @@ async function quizRequest(path, body) {
   return data;
 }
 
-export default function QuizAdmin({ lessons = [], theme }) {
+export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, stageGroups = [], isSameYear, authError, theme }) {
   const [quizzes, setQuizzes] = useState([]);
+  const [stageKey, setStageKey] = useState('');
+  const [year, setYear] = useState('');
+  const [subjectId, setSubjectId] = useState('');
+  const [chapterId, setChapterId] = useState('');
   const [lessonId, setLessonId] = useState('');
   const [filter, setFilter] = useState('');
   const [title, setTitle] = useState('');
@@ -38,9 +43,9 @@ export default function QuizAdmin({ lessons = [], theme }) {
 
   useEffect(() => {
     let active = true;
-    refresh().catch((cause) => { if (active) setError(cause.message); }).finally(() => { if (active) setLoading(false); });
+    refresh().catch((cause) => { if (active) setError(authError || cause.message); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [refresh]);
+  }, [refresh, authError]);
 
   useEffect(() => {
     if (!lessonId) { setSelectedQuiz(null); setTitle(''); setQuestions([emptyQuestion()]); setStats(null); return; }
@@ -58,15 +63,25 @@ export default function QuizAdmin({ lessons = [], theme }) {
           .then((summary) => { if (active) setStats(summary); }).catch(() => { if (active) setStats(null); });
         else setStats(null);
       })
-      .catch((cause) => { if (active) setError(cause.message); })
+      .catch((cause) => { if (active) setError(authError || cause.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [lessonId, lessons]);
+  }, [lessonId, lessons, authError]);
 
-  const availableLessons = useMemo(() => lessons
-    .filter((lesson) => lesson.id && String(lesson.title || '').includes(filter.trim()))
-    .sort((a, b) => String(a.year || '').localeCompare(String(b.year || ''), 'ar')),
-  [lessons, filter]);
+  const selectedStage = stageGroups.find((group) => group.key === stageKey);
+  const availableSubjects = useMemo(() => year
+    ? getQuizSubjects(subjects, chapters, lessons, year, isSameYear) : [],
+  [subjects, chapters, lessons, year, isSameYear]);
+  const selectedSubject = availableSubjects.find((subject) => subject.id === subjectId);
+  const subjectVideos = useMemo(() => getQuizVideos(lessons, year, selectedSubject, isSameYear),
+    [lessons, year, selectedSubject, isSameYear]);
+  const availableChapters = useMemo(() => getQuizChapters(chapters, selectedSubject, year, subjectVideos, isSameYear),
+    [chapters, selectedSubject, year, subjectVideos, isSameYear]);
+  const selectedChapter = availableChapters.find((chapter) => chapter.id === chapterId);
+  const availableLessons = useMemo(() => subjectVideos.filter((lesson) => selectedChapter?.lessonIds.includes(lesson.id)
+    && String(lesson.title || '').toLocaleLowerCase('ar').includes(filter.trim().toLocaleLowerCase('ar'))),
+  [subjectVideos, selectedChapter, filter]);
+  const quizByLessonId = useMemo(() => new Map(quizzes.map((quiz) => [quiz.lesson_id, quiz])), [quizzes]);
   const selectedLesson = lessons.find((lesson) => lesson.id === lessonId);
   const locked = !!selectedQuiz && selectedQuiz.status !== 'draft' && !editingRevision;
 
@@ -111,21 +126,59 @@ export default function QuizAdmin({ lessons = [], theme }) {
         <span>{quizzes.length} اختبار</span>
       </header>
       <div className="qa-layout">
-        <aside className="qa-lessons">
-          <label>ابحث عن محاضرة<input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="اسم المحاضرة" /></label>
+        <aside className="qa-lessons" aria-label="اختيار فيديو الاختبار">
+          <div className="qa-step"><span>1</span><strong>المرحلة</strong></div>
+          <div className="qa-choice-row">
+            {stageGroups.map((group) => <button type="button" key={group.key} className={stageKey === group.key ? 'selected' : ''} onClick={() => {
+              setStageKey(group.key); setYear(''); setSubjectId(''); setChapterId(''); setLessonId(''); setFilter('');
+            }}>{group.label}</button>)}
+          </div>
+          <div className="qa-step"><span>2</span><strong>الفرقة أو الصف</strong></div>
+          <label className="qa-select-label">اختر الفرقة أو الصف
+            <select value={year} disabled={!selectedStage} onChange={(event) => {
+              setYear(event.target.value); setSubjectId(''); setChapterId(''); setLessonId(''); setFilter('');
+            }}>
+              <option value="">اختر الفرقة أو الصف</option>
+              {selectedStage?.options.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
+          <div className="qa-step"><span>3</span><strong>المادة</strong></div>
+          <label className="qa-select-label">اختر المادة
+            <select value={subjectId} disabled={!year} onChange={(event) => {
+              setSubjectId(event.target.value); setChapterId(''); setLessonId(''); setFilter('');
+            }}>
+              <option value="">اختر المادة</option>
+              {availableSubjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}
+            </select>
+          </label>
+          {year && !availableSubjects.length && <p className="qa-muted">لا توجد مواد لهذه الفرقة أو الصف.</p>}
+          <div className="qa-step"><span>4</span><strong>الشابتر</strong></div>
+          <label className="qa-select-label">اختر الشابتر
+            <select value={chapterId} disabled={!selectedSubject} onChange={(event) => {
+              setChapterId(event.target.value); setLessonId(''); setFilter('');
+            }}>
+              <option value="">اختر الشابتر</option>
+              {availableChapters.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapter.name} ({chapter.lessonIds.length})</option>)}
+            </select>
+          </label>
+          {selectedSubject && !availableChapters.length && <p className="qa-muted">لا توجد شابترات في هذه المادة.</p>}
+          <div className="qa-step"><span>5</span><strong>الفيديو</strong></div>
+          <label className="qa-select-label">ابحث عن فيديو
+            <input value={filter} disabled={!selectedChapter} onChange={(event) => setFilter(event.target.value)} placeholder="اسم الفيديو" />
+          </label>
           <div className="qa-lesson-list">
             {availableLessons.map((lesson) => {
-              const quiz = quizzes.find((item) => item.lesson_id === lesson.id);
+              const quiz = quizByLessonId.get(lesson.id);
               return <button type="button" key={lesson.id} className={lessonId === lesson.id ? 'selected' : ''} onClick={() => setLessonId(lesson.id)}>
-                <strong>{lesson.title}</strong><small>{lesson.year || 'بدون مرحلة'} {quiz ? `· ${quiz.status === 'published' ? 'منشور' : quiz.status === 'paused' ? 'متوقف' : 'مسودة'} · ${quiz.question_count} سؤال · ${quiz.attempt_count} محاولة` : '· بدون اختبار'}</small>
+                <strong>{lesson.title}</strong><small>{quiz ? `${quiz.status === 'published' ? 'منشور' : quiz.status === 'paused' ? 'متوقف' : 'مسودة'} · ${quiz.question_count} سؤال · ${quiz.attempt_count} محاولة` : 'بدون اختبار'}</small>
               </button>;
             })}
-            {!availableLessons.length && <p className="qa-muted">لا توجد محاضرات مطابقة.</p>}
+            {selectedChapter && !availableLessons.length && <p className="qa-muted">لا توجد فيديوهات مطابقة في هذا الشابتر.</p>}
           </div>
         </aside>
         <div className="qa-editor">
-          {!lessonId ? <div className="qa-empty">اختر محاضرة لإضافة اختبار أو تعديل مسودتها.</div> : loading ? <div className="qa-empty">جاري تحميل الاختبار...</div> : <>
-            <div className="qa-editor-head"><div><h3>{selectedLesson?.title}</h3><p>{selectedLesson?.year} · {editingRevision ? 'نسخة معدلة' : selectedQuiz?.status === 'paused' ? 'متوقف' : selectedQuiz?.status === 'published' ? 'منشور' : selectedQuiz ? 'مسودة' : 'اختبار جديد'}</p></div></div>
+          {!lessonId ? <div className="qa-empty">اختر المرحلة والمادة والشابتر ثم الفيديو لإنشاء اختباره.</div> : loading ? <div className="qa-empty">جاري تحميل الاختبار...</div> : <>
+            <div className="qa-editor-head"><div><div className="qa-path">{selectedStage?.label} <span>›</span> {year} <span>›</span> {selectedSubject?.name} <span>›</span> {selectedChapter?.name}</div><h3>{selectedLesson?.title}</h3><p>{editingRevision ? 'نسخة معدلة' : selectedQuiz?.status === 'paused' ? 'متوقف' : selectedQuiz?.status === 'published' ? 'منشور' : selectedQuiz ? 'مسودة' : 'اختبار جديد'}</p></div></div>
             {!!stats && <div className="qa-stats"><div><strong>{stats.totalAttempts}</strong><span>طالب حل</span></div><div><strong>{stats.averagePercent == null ? '—' : `${stats.averagePercent}%`}</strong><span>متوسط النتيجة</span></div></div>}
             {!!stats?.questions?.length && <details className="qa-report"><summary>تحليل الأسئلة وأداء الطلاب</summary><h4>الأسئلة الأكثر خطأً{stats.totalAttempts > stats.analyzedAttempts ? ` (آخر ${stats.analyzedAttempts} محاولة)` : ''}</h4>{stats.questions.map((item) => <p key={`${item.version}:${item.id}`}><span>نسخة {item.version} · {item.prompt}</span><strong>{item.errorPercent}% أخطأوا</strong></p>)}<h4>آخر المحاولات</h4>{stats.attempts.map((item, index) => <p key={`${item.studentUid}:${index}`}><span>{item.studentName} · نسخة {item.version} · {new Date(item.submittedAt).toLocaleDateString('ar-EG')}</span><strong>{item.score}/{item.total}</strong></p>)}</details>}
             <label>عنوان الاختبار<input value={title} maxLength={140} disabled={locked || busy} onChange={(event) => setTitle(event.target.value)} /></label>
