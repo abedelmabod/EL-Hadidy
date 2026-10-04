@@ -131,4 +131,39 @@ test('teacher publishes, student submits once, and wrong answers become due revi
   const pausedHistory = await handleGet({ query: { action: 'quiz', lessonId: 'lesson-1' } }, student, db);
   assert.equal(pausedHistory.quiz.attempted, true);
   await handleAdminPost('resume', { quizId: draft.quizId }, admin, db);
+
+  await handleAdminPost('save', { lessonId: 'lesson-1', title: 'تعديل غير منشور', questions: [
+    { prompt: 'سؤال جديد', options: ['أ', 'ب', 'ج', 'د'], answerIndex: 0 },
+  ] }, admin, db);
+  await assert.rejects(() => handleAdminPost('delete', { quizId: draft.quizId }, student, db), { status: 403 });
+  await handleAdminPost('delete', { quizId: draft.quizId }, admin, db);
+
+  for (const [table, key] of [['quizzes', 'id'], ['quiz_questions', 'quiz_id'], ['quiz_versions', 'quiz_id'], ['quiz_revision_drafts', 'quiz_id'], ['quiz_attempts', 'quiz_id'], ['quiz_reviews', 'quiz_id']]) {
+    const count = await db.execute({ sql: `SELECT COUNT(*) AS total FROM ${table} WHERE ${key} = ?`, args: [draft.quizId] });
+    assert.equal(Number(count.rows[0].total), 0, `${table} should be empty after deletion`);
+  }
+  for (const table of ['quiz_attempt_versions', 'quiz_attempt_students', 'quiz_review_answers']) {
+    const count = await db.execute(`SELECT COUNT(*) AS total FROM ${table}`);
+    assert.equal(Number(count.rows[0].total), 0, `${table} should have no orphaned rows`);
+  }
+  assert.equal((await handleGet({ query: { action: 'quiz', lessonId: 'lesson-1' } }, student, db)).quiz, null);
+  assert.equal((await handleGet({ query: { action: 'reviews' } }, student, db)).reviews.length, 0);
+  assert.equal((await handleGet({ query: { action: 'history' } }, student, db)).history.length, 0);
+  assert.equal((await handleGet({ query: { action: 'adminList' } }, admin, db)).quizzes.length, 0);
+
+  const replacement = await handleAdminPost('save', {
+    lessonId: 'lesson-1', title: 'اختبار بديل',
+    questions: [{ prompt: 'سؤال بديل', options: ['أ', 'ب', 'ج', 'د'], answerIndex: 0 }],
+  }, admin, db);
+  await handleAdminPost('delete', { quizId: replacement.quizId }, admin, db);
+  assert.equal((await handleGet({ query: { action: 'adminList' } }, admin, db)).quizzes.length, 0);
+
+  const pausedReplacement = await handleAdminPost('save', {
+    lessonId: 'lesson-1', title: 'اختبار متوقف',
+    questions: [{ prompt: 'سؤال بديل', options: ['أ', 'ب', 'ج', 'د'], answerIndex: 0 }],
+  }, admin, db);
+  await handleAdminPost('publish', { quizId: pausedReplacement.quizId }, admin, db);
+  await handleAdminPost('pause', { quizId: pausedReplacement.quizId }, admin, db);
+  await handleAdminPost('delete', { quizId: pausedReplacement.quizId }, admin, db);
+  assert.equal((await handleGet({ query: { action: 'adminList' } }, admin, db)).quizzes.length, 0);
 });

@@ -97,6 +97,15 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
     try {
       await quizRequest('', body);
       await refresh();
+      if (body.action === 'delete') {
+        setSelectedQuiz(null);
+        setEditingRevision(false);
+        setTitle('');
+        setQuestions([emptyQuestion()]);
+        setStats(null);
+        setNotice(success);
+        return;
+      }
       const detail = await quizRequest(`?action=adminQuiz&lessonId=${encodeURIComponent(lessonId)}`);
       setSelectedQuiz(detail.quiz);
       setEditingRevision(!!detail.quiz?.hasRevisionDraft);
@@ -115,8 +124,13 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
     perform({ action: 'publish', quizId: selectedQuiz.id }, 'الاختبار متاح للطلاب الآن.');
   };
   const remove = () => {
-    if (!selectedQuiz || !window.confirm('حذف مسودة الاختبار؟')) return;
-    perform({ action: 'delete', quizId: selectedQuiz.id }, 'تم حذف المسودة.');
+    if (!selectedQuiz) return;
+    const isDraft = selectedQuiz.status === 'draft';
+    const message = isDraft
+      ? 'حذف مسودة الاختبار نهائيًا؟'
+      : `حذف الاختبار المنشور نهائيًا؟ سيتم حذف الأسئلة وكل نتائج الطلاب ومحاولاتهم ومراجعاتهم المرتبطة به (${selectedQuiz.attempt_count || 0} محاولة). لا يمكن التراجع عن هذا الإجراء.`;
+    if (!window.confirm(message)) return;
+    perform({ action: 'delete', quizId: selectedQuiz.id }, 'تم حذف الاختبار نهائيًا.');
   };
 
   return (
@@ -190,11 +204,12 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
               <label>توضيح بعد الحل (اختياري)<textarea value={question.explanation} disabled={locked || busy} maxLength={1000} onChange={(event) => updateQuestion(index, { explanation: event.target.value })} rows={2} /></label>
             </div>)}
             <div className="qa-actions">
-              {!locked && <><button type="button" onClick={() => setQuestions((current) => [...current, emptyQuestion()])} disabled={busy || questions.length >= 30}>+ سؤال</button><button type="button" className="primary" onClick={save} disabled={busy}>حفظ المسودة</button>{selectedQuiz?.status === 'draft' && <button type="button" className="primary" onClick={publish} disabled={busy}>نشر</button>}{selectedQuiz?.hasRevisionDraft && <button type="button" className="primary" onClick={publish} disabled={busy}>نشر النسخة المعدلة</button>}{selectedQuiz?.status === 'draft' && <button type="button" className="danger" onClick={remove} disabled={busy}>حذف المسودة</button>}</>}
+              {!locked && <><button type="button" onClick={() => setQuestions((current) => [...current, emptyQuestion()])} disabled={busy || questions.length >= 30}>+ سؤال</button><button type="button" className="primary" onClick={save} disabled={busy}>حفظ المسودة</button>{selectedQuiz?.status === 'draft' && <button type="button" className="primary" onClick={publish} disabled={busy}>نشر</button>}{selectedQuiz?.hasRevisionDraft && <button type="button" className="primary" onClick={publish} disabled={busy}>نشر النسخة المعدلة</button>}</>}
               {selectedQuiz && selectedQuiz.status !== 'draft' && !editingRevision && <button type="button" onClick={() => setEditingRevision(true)} disabled={busy}>تعديل نسخة جديدة</button>}
               {selectedQuiz?.hasRevisionDraft && <button type="button" className="danger" onClick={() => { if (window.confirm('التخلي عن التعديلات غير المنشورة؟')) perform({ action: 'discardRevision', quizId: selectedQuiz.id }, 'تم تجاهل النسخة المعدلة.'); }} disabled={busy}>تجاهل التعديل</button>}
               {selectedQuiz?.status === 'published' && <button type="button" className="danger" onClick={() => { if (window.confirm('إيقاف الاختبار للطلاب الجدد؟ ستبقى النتائج القديمة.')) perform({ action: 'pause', quizId: selectedQuiz.id }, 'تم إيقاف الاختبار.'); }} disabled={busy}>إيقاف مؤقت</button>}
               {selectedQuiz?.status === 'paused' && <button type="button" className="primary" onClick={() => perform({ action: 'resume', quizId: selectedQuiz.id }, 'تم إعادة إتاحة الاختبار.')} disabled={busy}>إعادة الإتاحة</button>}
+              {selectedQuiz && <button type="button" className="danger" onClick={remove} disabled={busy}>{selectedQuiz.status === 'draft' ? 'حذف المسودة' : 'حذف الاختبار'}</button>}
             </div>
           </>}
           {!!error && <p className="qa-message error" role="alert">{error}</p>}

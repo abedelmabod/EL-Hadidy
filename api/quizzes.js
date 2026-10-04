@@ -238,10 +238,16 @@ export async function handleAdminPost(action, body, identity, db) {
     return { discarded: true };
   }
   if (action === 'delete') {
-    if (quiz.status !== 'draft') throw new HttpError(409, 'لا يمكن حذف اختبار منشور.');
     await db.batch([
+      { sql: 'DELETE FROM quiz_review_answers WHERE review_id IN (SELECT id FROM quiz_reviews WHERE quiz_id = ?)', args: [quizId] },
+      { sql: 'DELETE FROM quiz_reviews WHERE quiz_id = ?', args: [quizId] },
+      { sql: 'DELETE FROM quiz_attempt_students WHERE attempt_id IN (SELECT id FROM quiz_attempts WHERE quiz_id = ?)', args: [quizId] },
+      { sql: 'DELETE FROM quiz_attempt_versions WHERE attempt_id IN (SELECT id FROM quiz_attempts WHERE quiz_id = ?)', args: [quizId] },
+      { sql: 'DELETE FROM quiz_attempts WHERE quiz_id = ?', args: [quizId] },
+      { sql: 'DELETE FROM quiz_revision_drafts WHERE quiz_id = ?', args: [quizId] },
+      { sql: 'DELETE FROM quiz_versions WHERE quiz_id = ?', args: [quizId] },
       { sql: 'DELETE FROM quiz_questions WHERE quiz_id = ?', args: [quizId] },
-      { sql: "DELETE FROM quizzes WHERE id = ? AND status = 'draft'", args: [quizId] },
+      { sql: 'DELETE FROM quizzes WHERE id = ?', args: [quizId] },
     ], 'write');
     return { deleted: true };
   }
