@@ -2301,7 +2301,7 @@ const AdminDashboard = ({
         )}
 
         {activeTab === 'quizzes' && <QuizAdmin lessons={lessons} subjects={subjects} chapters={chapters} stageGroups={stageGroups} isSameYear={isSameYear} authError={user?.quizAuthError} theme={theme} />}
-        {activeTab === 'study_plan' && <StudyPlanAdmin lessons={lessons} theme={theme} />}
+        {activeTab === 'study_plan' && <StudyPlanAdmin lessons={lessons} subjects={subjects} chapters={chapters} stageGroups={stageGroups} isSameYear={isSameYear} theme={theme} />}
 
         {activeTab === 'notifications' && (
           <form className="notification-compose fade-in" onSubmit={sendAnnouncement}>
