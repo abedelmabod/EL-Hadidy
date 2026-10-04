@@ -15,6 +15,7 @@ import {
   deleteUser,
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   signOut,
 } from "firebase/auth";
 
@@ -69,11 +70,14 @@ function normalizeYear(value) {
 }
 
 function buildSessionUser(id, role, data, authUser = null) {
+  const safeData = { ...data };
+  delete safeData.password;
+  delete safeData.passwordHash;
   return {
     id,
     uid: authUser?.uid || data.authUid || id,
     email: authUser?.email || data.email || buildAuthEmail(data.username),
-    ...data,
+    ...safeData,
     role,
   };
 }
@@ -263,6 +267,27 @@ export async function signInWithSharedCredentials(services, payload) {
   }
 
   const legacyProfile = await findUserByIdentifier(db, identifier);
+  if (legacyProfile?.role === 'admin') {
+    const response = await fetch('/api/admin-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier, password }),
+    });
+    const session = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new SharedAuthError('ADMIN_SIGN_IN_FAILED', session.error || 'تعذر تسجيل دخول المدير. حاول مرة أخرى.');
+    }
+    const credential = await signInWithCustomToken(auth, session.customToken);
+    const profile = await findUserByUid(db, credential.user.uid);
+    if (profile?.role !== 'admin' || profile.data.isBanned) {
+      await signOut(auth);
+      throw new SharedAuthError('ADMIN_AUTH_MISMATCH', 'تعذر التحقق من صلاحيات المدير.');
+    }
+    return {
+      authMode: 'firebase',
+      user: buildSessionUser(profile.id, 'admin', profile.data, credential.user),
+    };
+  }
   const authEmail = legacyProfile?.role === 'admin' && legacyProfile.data.email
     ? String(legacyProfile.data.email).trim()
     : buildAuthEmail(identifier);

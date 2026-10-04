@@ -15,7 +15,7 @@ export class HttpError extends Error {
   }
 }
 
-function firebaseApp() {
+export function firebaseApp() {
   if (getApps().length) return getApps()[0];
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (!json) throw new HttpError(503, 'Firebase server credentials are not configured.');
