@@ -4,6 +4,7 @@ import { collection, addDoc, doc, updateDoc, deleteDoc, writeBatch, getDocs, que
 import Swal from 'sweetalert2'; 
 import ThemeToggle from './ThemeToggle';
 import QuizAdmin from './QuizAdmin';
+import StudyPlanAdmin from './StudyPlanAdmin';
 import { keepEnglishDigitsOnly } from './services/auth-service';
 
 const AdminDashboard = ({ 
@@ -1908,6 +1909,7 @@ const AdminDashboard = ({
     { id: 'students', icon: 'fa-users', label: 'الطلاب' },
     { id: 'notifications', icon: 'fa-bell', label: 'الإشعارات' },
     { id: 'quizzes', icon: 'fa-clipboard-check', label: 'الاختبارات' },
+    { id: 'study_plan', icon: 'fa-calendar-check', label: 'خطة المذاكرة' },
     { id: 'codes', icon: 'fa-ticket-alt', label: 'الأكواد' },
     { id: 'support_requests', icon: 'fa-headset', label: 'طلبات الدعم', badge: pendingSupportRequests.length },
     { id: 'logs', icon: 'fa-shield-alt', label: 'الرقابة' },
@@ -1921,6 +1923,7 @@ const AdminDashboard = ({
     students: { title: 'الطلاب', subtitle: 'بحث، مراجعة، وحظر أو تفعيل الحسابات' },
     notifications: { title: 'إرسال إشعار', subtitle: 'رسالة مباشرة لأجهزة الطلاب المسجلة في التطبيق' },
     quizzes: { title: 'الاختبارات', subtitle: 'اختبارات المحاضرات والمراجعة المتباعدة' },
+    study_plan: { title: 'خطة المذاكرة', subtitle: 'تحديد أولويات المحاضرات للطلاب' },
     codes: { title: 'الأكواد', subtitle: 'توليد الأكواد وتصديرها ومراجعة الاستخدام' },
     support_requests: { title: 'طلبات الدعم', subtitle: 'طلبات تصفير الجهاز ومشاكل المحتوى والحساب القادمة من التطبيق' },
     logs: { title: 'الرقابة', subtitle: 'سجل الحماية والتنبيهات الأمنية' },
@@ -2298,6 +2301,7 @@ const AdminDashboard = ({
         )}
 
         {activeTab === 'quizzes' && <QuizAdmin lessons={lessons} subjects={subjects} chapters={chapters} stageGroups={stageGroups} isSameYear={isSameYear} authError={user?.quizAuthError} theme={theme} />}
+        {activeTab === 'study_plan' && <StudyPlanAdmin lessons={lessons} theme={theme} />}
 
         {activeTab === 'notifications' && (
           <form className="notification-compose fade-in" onSubmit={sendAnnouncement}>

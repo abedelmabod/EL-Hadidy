@@ -77,6 +77,8 @@ test('teacher publishes, student submits once, and wrong answers become due revi
   assert.equal(shown.questions[0].answerIndex, undefined);
   const submitted = await handleStudentPost('submit', { lessonId: 'lesson-1', answers: [0] }, student, db);
   assert.equal(submitted.result.correct, 0);
+  const initialStats = await handleGet({ query: { action: 'adminStats', lessonId: 'lesson-1' } }, admin, db);
+  assert.equal(initialStats.needsReview[0].studentUid, 'student-1');
   await assert.rejects(() => handleStudentPost('submit', { lessonId: 'lesson-1', answers: [1] }, student, db), { status: 409 });
   const due = await handleGet({ query: { action: 'reviews' } }, student, db);
   assert.equal(due.reviews.length, 3);
@@ -89,6 +91,8 @@ test('teacher publishes, student submits once, and wrong answers become due revi
   assert.equal(result.result.correct, 1);
   const remaining = await handleGet({ query: { action: 'reviews' } }, student, db);
   assert.equal(remaining.reviews.length, 1);
+  const pendingPlanReviews = await handleGet({ query: { action: 'pendingReviews' } }, student, db);
+  assert.equal(pendingPlanReviews.reviews.length, 0);
 
   const history = await handleGet({ query: { action: 'quiz', lessonId: 'lesson-1' } }, student, db);
   assert.equal(history.history[0].answerIndex, 1);
@@ -166,4 +170,72 @@ test('teacher publishes, student submits once, and wrong answers become due revi
   await handleAdminPost('pause', { quizId: pausedReplacement.quizId }, admin, db);
   await handleAdminPost('delete', { quizId: pausedReplacement.quizId }, admin, db);
   assert.equal((await handleGet({ query: { action: 'adminList' } }, admin, db)).quizzes.length, 0);
+});
+
+test('practice draws a stable question set, allows retries, reports results, and deletes cleanly', async () => {
+  const db = await getDatabase();
+  const admin = makeIdentity('admin-1');
+  const student = makeIdentity('student-1');
+  const draft = await handleAdminPost('save', { lessonId: 'lesson-1', title: 'بنك تدريب', mode: 'practice',
+    drawCount: 2, shuffleOptions: true, questions: [
+      { prompt: 'السؤال الأول', options: ['صحيح 1', 'خطأ 1أ', 'خطأ 1ب', 'خطأ 1ج'], answerIndex: 0 },
+      { prompt: 'السؤال الثاني', options: ['صحيح 2', 'خطأ 2أ', 'خطأ 2ب', 'خطأ 2ج'], answerIndex: 0 },
+      { prompt: 'السؤال الثالث', options: ['صحيح 3', 'خطأ 3أ', 'خطأ 3ب', 'خطأ 3ج'], answerIndex: 0 },
+    ] }, admin, db);
+  await handleAdminPost('publish', { quizId: draft.quizId }, admin, db);
+  const get = () => handleGet({ query: { action: 'quiz', lessonId: 'lesson-1' } }, student, db);
+  const shown = await get();
+  assert.equal(shown.quiz.mode, 'practice');
+  assert.equal(shown.questions.length, 2);
+  assert.deepEqual((await get()).questions, shown.questions);
+  assert.ok(shown.questions.every((question) => question.answerIndex === undefined));
+  const correct = shown.questions.map((question) => question.options.findIndex((option) => option.startsWith('صحيح')));
+  const first = await handleStudentPost('submit', { lessonId: 'lesson-1', assignmentKey: shown.quiz.assignmentKey, answers: correct }, student, db);
+  assert.equal(first.result.correct, 2);
+  await assert.rejects(() => handleStudentPost('submit', { lessonId: 'lesson-1', assignmentKey: shown.quiz.assignmentKey, answers: correct }, student, db), { status: 409 });
+  assert.equal((await get()).quiz.lastPractice.correct, 2);
+  const retry = await get();
+  const retryAnswers = retry.questions.map((question) => question.options.findIndex((option) => option.startsWith('صحيح')));
+  await handleStudentPost('submit', { lessonId: 'lesson-1', assignmentKey: retry.quiz.assignmentKey, answers: retryAnswers }, student, db);
+  const stats = await handleGet({ query: { action: 'adminStats', lessonId: 'lesson-1' } }, admin, db);
+  assert.equal(stats.totalAttempts, 2);
+  assert.equal(stats.completedStudents, 1);
+  assert.equal(stats.completionPercent, 100);
+  assert.equal(stats.questions.length, new Set([...shown.questions, ...retry.questions].map((q) => q.id)).size);
+  const exportData = await handleGet({ query: { action: 'adminExport', lessonId: 'lesson-1' } }, admin, db);
+  assert.equal(exportData.attempts.length, 2);
+  assert.equal(exportData.attempts[0].mode, 'practice');
+  await handleAdminPost('delete', { quizId: draft.quizId }, admin, db);
+  for (const table of ['quiz_settings', 'quiz_revision_settings', 'quiz_assignments', 'quiz_practice_attempts', 'quiz_attempt_presentations']) {
+    assert.equal(Number((await db.execute({ sql: `SELECT COUNT(*) AS count FROM ${table}` })).rows[0].count), 0, table);
+  }
+});
+
+test('exam grades the assigned options and preserves an in-progress version after edits', async () => {
+  const db = await getDatabase();
+  const admin = makeIdentity('admin-1');
+  const student = makeIdentity('student-2');
+  const questions = [1, 2, 3].map((number) => ({ prompt: `سؤال ${number}`,
+    options: [`صحيح ${number}`, `خطأ أ ${number}`, `خطأ ب ${number}`, `خطأ ج ${number}`], answerIndex: 0 }));
+  const saved = await handleAdminPost('save', { lessonId: 'lesson-1', title: 'امتحان البنك', mode: 'exam',
+    drawCount: 2, shuffleOptions: true, questions }, admin, db);
+  await handleAdminPost('publish', { quizId: saved.quizId }, admin, db);
+  const get = () => handleGet({ query: { action: 'quiz', lessonId: 'lesson-1' } }, student, db);
+  const assigned = await get();
+  assert.equal(assigned.questions.length, 2);
+  assert.equal((await handleGet({ query: { action: 'adminStats', lessonId: 'lesson-1' } }, admin, db)).inProgressStudents, 1);
+  await handleAdminPost('save', { lessonId: 'lesson-1', title: 'نسخة جديدة', mode: 'practice',
+    drawCount: 1, shuffleOptions: false, questions }, admin, db);
+  await handleAdminPost('publish', { quizId: saved.quizId }, admin, db);
+  assert.deepEqual((await get()).questions, assigned.questions);
+  const answers = assigned.questions.map((question) => question.options.findIndex((option) => option.startsWith('صحيح')));
+  assert.equal((await handleStudentPost('submit', { lessonId: 'lesson-1', assignmentKey: assigned.quiz.assignmentKey, answers }, student, db)).result.correct, 2);
+  const after = await get();
+  assert.equal(after.quiz.mode, 'practice');
+  assert.equal(after.quiz.result, null);
+  const report = await handleGet({ query: { action: 'adminStats', lessonId: 'lesson-1' } }, admin, db);
+  assert.equal(report.totalAttempts, 1);
+  assert.equal(report.questions.length, 2);
+  assert.equal(report.questions.every((question) => question.errorPercent === 0), true);
+  await handleAdminPost('delete', { quizId: saved.quizId }, admin, db);
 });

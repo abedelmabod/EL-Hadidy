@@ -25,9 +25,14 @@ export function activeCodeGrantsAccess(code, student, requestedYear) {
 export function validateQuizInput(input) {
   const title = String(input?.title || '').trim();
   const questions = input?.questions;
+  const mode = input?.mode == null ? 'exam' : String(input.mode);
+  const drawCount = input?.drawCount == null ? 0 : Number(input.drawCount);
+  const shuffleOptions = input?.shuffleOptions === true;
   if (!title || title.length > 140) throw new Error('عنوان الاختبار مطلوب (بحد أقصى 140 حرفًا).');
-  if (!Array.isArray(questions) || questions.length < 1 || questions.length > 30) throw new Error('أضف من سؤال إلى 30 سؤالًا.');
-  return { title, questions: questions.map((item, index) => {
+  if (!['exam', 'practice'].includes(mode)) throw new Error('نوع الاختبار غير صالح.');
+  if (!Array.isArray(questions) || questions.length < 1 || questions.length > 100) throw new Error('أضف من سؤال إلى 100 سؤال.');
+  if (!Number.isInteger(drawCount) || drawCount < 0 || drawCount > questions.length) throw new Error('عدد الأسئلة المختارة غير صالح.');
+  return { title, mode, drawCount, shuffleOptions, questions: questions.map((item, index) => {
     const prompt = String(item?.prompt || '').trim();
     const options = Array.isArray(item?.options) ? item.options.map((option) => String(option || '').trim()) : [];
     const answerIndex = Number(item?.answerIndex);

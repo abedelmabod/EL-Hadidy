@@ -73,6 +73,45 @@ export async function getDatabase() {
       `CREATE TABLE IF NOT EXISTS quiz_review_answers (
         review_id TEXT PRIMARY KEY, answers_json TEXT NOT NULL, wrong_ids_json TEXT NOT NULL
       )`,
+      `CREATE TABLE IF NOT EXISTS quiz_settings (
+        quiz_id TEXT PRIMARY KEY, mode TEXT NOT NULL DEFAULT 'exam',
+        draw_count INTEGER NOT NULL DEFAULT 0, shuffle_options INTEGER NOT NULL DEFAULT 0
+      )`,
+      `CREATE TABLE IF NOT EXISTS quiz_revision_settings (
+        quiz_id TEXT PRIMARY KEY, mode TEXT NOT NULL,
+        draw_count INTEGER NOT NULL, shuffle_options INTEGER NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS quiz_assignments (
+        id TEXT NOT NULL, quiz_id TEXT NOT NULL, student_uid TEXT NOT NULL, mode TEXT NOT NULL,
+        version INTEGER NOT NULL, questions_json TEXT NOT NULL,
+        created_at TEXT NOT NULL, PRIMARY KEY (quiz_id, student_uid)
+      )`,
+      `CREATE TABLE IF NOT EXISTS quiz_attempt_presentations (
+        attempt_id TEXT PRIMARY KEY, questions_json TEXT NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS quiz_practice_attempts (
+        id TEXT PRIMARY KEY, quiz_id TEXT NOT NULL, student_uid TEXT NOT NULL,
+        student_name TEXT NOT NULL, version INTEGER NOT NULL, assignment_key TEXT NOT NULL UNIQUE,
+        questions_json TEXT NOT NULL, answers_json TEXT NOT NULL,
+        score INTEGER NOT NULL, total INTEGER NOT NULL, submitted_at TEXT NOT NULL
+      )`,
+      'CREATE INDEX IF NOT EXISTS quiz_practice_student ON quiz_practice_attempts(quiz_id, student_uid, submitted_at)',
+      `CREATE TABLE IF NOT EXISTS study_plan_preferences (
+        student_uid TEXT PRIMARY KEY, rest_days_json TEXT NOT NULL DEFAULT '[]',
+        reminders_enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS study_plan_tasks (
+        student_uid TEXT NOT NULL, task_key TEXT NOT NULL, postponed_until TEXT,
+        updated_at TEXT NOT NULL, PRIMARY KEY (student_uid, task_key)
+      )`,
+      `CREATE TABLE IF NOT EXISTS study_plan_priorities (
+        lesson_id TEXT PRIMARY KEY, priority INTEGER NOT NULL DEFAULT 0,
+        target_date TEXT, updated_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS study_plan_completions (
+        student_uid TEXT NOT NULL, lesson_id TEXT NOT NULL, completed_at TEXT NOT NULL,
+        PRIMARY KEY (student_uid, lesson_id)
+      )`,
     ], 'write').catch((error) => { schemaPromise = null; throw error; });
   }
   await schemaPromise;

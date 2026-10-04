@@ -28,6 +28,9 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
   const [filter, setFilter] = useState('');
   const [title, setTitle] = useState('');
   const [questions, setQuestions] = useState([emptyQuestion()]);
+  const [mode, setMode] = useState('exam');
+  const [drawCount, setDrawCount] = useState(0);
+  const [shuffleOptions, setShuffleOptions] = useState(false);
   const [selectedQuiz, setSelectedQuiz] = useState(null);
   const [editingRevision, setEditingRevision] = useState(false);
   const [stats, setStats] = useState(null);
@@ -48,7 +51,7 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
   }, [refresh, authError]);
 
   useEffect(() => {
-    if (!lessonId) { setSelectedQuiz(null); setTitle(''); setQuestions([emptyQuestion()]); setStats(null); return; }
+    if (!lessonId) { setSelectedQuiz(null); setTitle(''); setQuestions([emptyQuestion()]); setMode('exam'); setDrawCount(0); setShuffleOptions(false); setStats(null); return; }
     let active = true;
     setLoading(true);
     setError('');
@@ -59,6 +62,9 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
         setEditingRevision(!!data.quiz?.hasRevisionDraft);
         setTitle(data.draftTitle || data.quiz?.title || `اختبار ${lessons.find((lesson) => lesson.id === lessonId)?.title || 'المحاضرة'}`);
         setQuestions(data.questions?.length ? data.questions : [emptyQuestion()]);
+        setMode(data.quiz?.mode || 'exam');
+        setDrawCount(Number(data.quiz?.draw_count || 0));
+        setShuffleOptions(!!data.quiz?.shuffle_options);
         if (data.quiz) quizRequest(`?action=adminStats&lessonId=${encodeURIComponent(lessonId)}`)
           .then((summary) => { if (active) setStats(summary); }).catch(() => { if (active) setStats(null); });
         else setStats(null);
@@ -102,6 +108,7 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
         setEditingRevision(false);
         setTitle('');
         setQuestions([emptyQuestion()]);
+        setMode('exam'); setDrawCount(0); setShuffleOptions(false);
         setStats(null);
         setNotice(success);
         return;
@@ -111,6 +118,9 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
       setEditingRevision(!!detail.quiz?.hasRevisionDraft);
       setTitle(detail.draftTitle || detail.quiz?.title || title);
       setQuestions(detail.questions?.length ? detail.questions : [emptyQuestion()]);
+      setMode(detail.quiz?.mode || 'exam');
+      setDrawCount(Number(detail.quiz?.draw_count || 0));
+      setShuffleOptions(!!detail.quiz?.shuffle_options);
       const summary = await quizRequest(`?action=adminStats&lessonId=${encodeURIComponent(lessonId)}`);
       setStats(summary);
       setNotice(success);
@@ -118,7 +128,23 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
     finally { setBusy(false); }
   };
 
-  const save = () => perform({ action: 'save', lessonId, title, questions }, 'تم حفظ المسودة.');
+  const save = () => perform({ action: 'save', lessonId, title, questions, mode,
+    drawCount: drawCount > questions.length ? 0 : drawCount, shuffleOptions }, 'تم حفظ المسودة.');
+  const exportResults = async () => {
+    setBusy(true); setError('');
+    try {
+      const report = await quizRequest(`?action=adminExport&lessonId=${encodeURIComponent(lessonId)}`);
+      const safeCell = (value) => `"${String(value ?? '').replace(/^[=+@-]/, "'$&").replace(/"/g, '""')}"`;
+      const lines = [['الطالب', 'معرّف الطالب', 'الوضع', 'الدرجة', 'إجمالي الأسئلة', 'وقت التسليم', 'النسخة'],
+        ...report.attempts.map((item) => [item.studentName, item.studentUid, item.mode === 'practice' ? 'تدريب' : 'امتحان', item.score, item.total, item.submittedAt, item.version])];
+      const blob = new Blob(['\ufeff', lines.map((row) => row.map(safeCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); link.href = url; link.download = `quiz-results-${lessonId}.csv`; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      if (report.truncated) setNotice('الملف يحتوي آخر 10000 محاولة فقط.');
+    } catch (cause) { setError(cause.message); }
+    finally { setBusy(false); }
+  };
   const publish = () => {
     if (!selectedQuiz || !window.confirm(selectedQuiz.status === 'draft' ? 'نشر الاختبار للطلاب؟' : 'نشر نسخة مصححة؟ ستبقى النتائج القديمة مرتبطة بالنسخة السابقة.')) return;
     perform({ action: 'publish', quizId: selectedQuiz.id }, 'الاختبار متاح للطلاب الآن.');
@@ -136,7 +162,7 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
   return (
     <section className="qa-shell" style={{ '--qa-surface': theme.surface, '--qa-border': theme.borderSoft, '--qa-text': theme.text, '--qa-muted': theme.subText, '--qa-accent': theme.accent }} dir="rtl">
       <header className="qa-heading">
-        <div><h2>اختبارات المحاضرات</h2><p>سؤال واحد على الأقل لكل اختبار. الإجابات تُصحح على السيرفر فقط.</p></div>
+        <div><h2>اختبارات المحاضرات</h2><p>أنشئ بنك أسئلة للفيديو، ثم حدد طريقة العرض للطلاب.</p></div>
         <span>{quizzes.length} اختبار</span>
       </header>
       <div className="qa-layout">
@@ -193,9 +219,23 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
         <div className="qa-editor">
           {!lessonId ? <div className="qa-empty">اختر المرحلة والمادة والشابتر ثم الفيديو لإنشاء اختباره.</div> : loading ? <div className="qa-empty">جاري تحميل الاختبار...</div> : <>
             <div className="qa-editor-head"><div><div className="qa-path">{selectedStage?.label} <span>›</span> {year} <span>›</span> {selectedSubject?.name} <span>›</span> {selectedChapter?.name}</div><h3>{selectedLesson?.title}</h3><p>{editingRevision ? 'نسخة معدلة' : selectedQuiz?.status === 'paused' ? 'متوقف' : selectedQuiz?.status === 'published' ? 'منشور' : selectedQuiz ? 'مسودة' : 'اختبار جديد'}</p></div></div>
-            {!!stats && <div className="qa-stats"><div><strong>{stats.totalAttempts}</strong><span>طالب حل</span></div><div><strong>{stats.averagePercent == null ? '—' : `${stats.averagePercent}%`}</strong><span>متوسط النتيجة</span></div></div>}
-            {!!stats?.questions?.length && <details className="qa-report"><summary>تحليل الأسئلة وأداء الطلاب</summary><h4>الأسئلة الأكثر خطأً{stats.totalAttempts > stats.analyzedAttempts ? ` (آخر ${stats.analyzedAttempts} محاولة)` : ''}</h4>{stats.questions.map((item) => <p key={`${item.version}:${item.id}`}><span>نسخة {item.version} · {item.prompt}</span><strong>{item.errorPercent}% أخطأوا</strong></p>)}<h4>آخر المحاولات</h4>{stats.attempts.map((item, index) => <p key={`${item.studentUid}:${index}`}><span>{item.studentName} · نسخة {item.version} · {new Date(item.submittedAt).toLocaleDateString('ar-EG')}</span><strong>{item.score}/{item.total}</strong></p>)}</details>}
+            {!!stats && <div className="qa-stats"><div><strong>{stats.totalAttempts}</strong><span>إجمالي المحاولات</span></div><div><strong>{stats.completedStudents}</strong><span>طلاب أكملوا</span></div><div><strong>{stats.completionPercent == null ? '—' : `${stats.completionPercent}%`}</strong><span>الإكمال ممن بدأوا</span></div><div><strong>{stats.averagePercent == null ? '—' : `${stats.averagePercent}%`}</strong><span>متوسط النتيجة</span></div></div>}
+            {!!stats && <details className="qa-report">
+              <summary>تحليل الأسئلة وأداء الطلاب</summary>
+              <div className="qa-report-toolbar"><span>{stats.inProgressStudents} لم يكملوا بعد</span><button type="button" onClick={exportResults} disabled={busy}>تصدير النتائج CSV</button></div>
+              <h4>الأسئلة الأكثر خطأً{stats.totalAttempts > stats.analyzedAttempts ? ` (آخر ${stats.analyzedAttempts} محاولة)` : ''}</h4>
+              {stats.questions.length ? stats.questions.map((item) => <p key={`${item.version}:${item.id}`}><span>نسخة {item.version} · {item.prompt}</span><strong>{item.errorPercent}% أخطأوا</strong></p>) : <p>لا توجد إجابات بعد.</p>}
+              <h4>طلاب يحتاجون مراجعة (أقل من 60%)</h4>
+              {stats.needsReview?.length ? stats.needsReview.map((item) => <p key={item.studentUid}><span>{item.studentName}</span><strong>{item.score}/{item.total}</strong></p>) : <p>لا يوجد حاليًا.</p>}
+              <h4>آخر المحاولات</h4>
+              {stats.attempts.map((item, index) => <p key={`${item.studentUid}:${index}`}><span>{item.studentName} · {item.mode === 'practice' ? 'تدريب' : 'امتحان'} · نسخة {item.version} · {new Date(item.submittedAt).toLocaleDateString('ar-EG')}</span><strong>{item.score}/{item.total}</strong></p>)}
+            </details>}
             <label>عنوان الاختبار<input value={title} maxLength={140} disabled={locked || busy} onChange={(event) => setTitle(event.target.value)} /></label>
+            <div className="qa-settings">
+              <label>نوع الاختبار<select value={mode} disabled={locked || busy} onChange={(event) => setMode(event.target.value)}><option value="exam">امتحان: محاولة واحدة</option><option value="practice">تدريب: إعادة المحاولة متاحة</option></select></label>
+              <label>أسئلة كل محاولة<select value={drawCount > questions.length ? 0 : drawCount} disabled={locked || busy} onChange={(event) => setDrawCount(Number(event.target.value))}><option value={0}>كل الأسئلة ({questions.length})</option>{Array.from({ length: Math.max(questions.length - 1, 0) }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} من {questions.length}</option>)}</select></label>
+              <label className="qa-checkbox"><input type="checkbox" checked={shuffleOptions} disabled={locked || busy} onChange={(event) => setShuffleOptions(event.target.checked)} /> خلط ترتيب الاختيارات لكل طالب</label>
+            </div>
             {questions.map((question, index) => <div className="qa-question" key={question.id || index}>
               <div className="qa-question-head"><strong>سؤال {index + 1}</strong>{!locked && questions.length > 1 && <button type="button" onClick={() => setQuestions((current) => current.filter((_, i) => i !== index))}>حذف</button>}</div>
               <textarea value={question.prompt} disabled={locked || busy} maxLength={1000} onChange={(event) => updateQuestion(index, { prompt: event.target.value })} placeholder="نص السؤال" rows={2} />
@@ -204,7 +244,7 @@ export default function QuizAdmin({ lessons = [], subjects = [], chapters = {}, 
               <label>توضيح بعد الحل (اختياري)<textarea value={question.explanation} disabled={locked || busy} maxLength={1000} onChange={(event) => updateQuestion(index, { explanation: event.target.value })} rows={2} /></label>
             </div>)}
             <div className="qa-actions">
-              {!locked && <><button type="button" onClick={() => setQuestions((current) => [...current, emptyQuestion()])} disabled={busy || questions.length >= 30}>+ سؤال</button><button type="button" className="primary" onClick={save} disabled={busy}>حفظ المسودة</button>{selectedQuiz?.status === 'draft' && <button type="button" className="primary" onClick={publish} disabled={busy}>نشر</button>}{selectedQuiz?.hasRevisionDraft && <button type="button" className="primary" onClick={publish} disabled={busy}>نشر النسخة المعدلة</button>}</>}
+              {!locked && <><button type="button" onClick={() => setQuestions((current) => [...current, emptyQuestion()])} disabled={busy || questions.length >= 100}>+ سؤال</button><button type="button" className="primary" onClick={save} disabled={busy}>حفظ المسودة</button>{selectedQuiz?.status === 'draft' && <button type="button" className="primary" onClick={publish} disabled={busy}>نشر</button>}{selectedQuiz?.hasRevisionDraft && <button type="button" className="primary" onClick={publish} disabled={busy}>نشر النسخة المعدلة</button>}</>}
               {selectedQuiz && selectedQuiz.status !== 'draft' && !editingRevision && <button type="button" onClick={() => setEditingRevision(true)} disabled={busy}>تعديل نسخة جديدة</button>}
               {selectedQuiz?.hasRevisionDraft && <button type="button" className="danger" onClick={() => { if (window.confirm('التخلي عن التعديلات غير المنشورة؟')) perform({ action: 'discardRevision', quizId: selectedQuiz.id }, 'تم تجاهل النسخة المعدلة.'); }} disabled={busy}>تجاهل التعديل</button>}
               {selectedQuiz?.status === 'published' && <button type="button" className="danger" onClick={() => { if (window.confirm('إيقاف الاختبار للطلاب الجدد؟ ستبقى النتائج القديمة.')) perform({ action: 'pause', quizId: selectedQuiz.id }, 'تم إيقاف الاختبار.'); }} disabled={busy}>إيقاف مؤقت</button>}

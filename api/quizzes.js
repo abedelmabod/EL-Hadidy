@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { gradeAnswers, publicQuestions, reviewSchedule, validateQuizInput } from './_quiz-domain.js';
 import { getDatabase, HttpError, identify, requireAdmin, requireExistingLesson, requireLessonAccess, requireStudent } from './_quiz-server.js';
 
@@ -7,6 +7,44 @@ const run = (db, sql, args = []) => db.execute({ sql, args });
 const rows = async (db, sql, args = []) => (await run(db, sql, args)).rows;
 const first = async (db, sql, args = []) => (await rows(db, sql, args))[0] || null;
 const cleanId = (value) => String(value || '').trim().slice(0, 128);
+const defaultSettings = { mode: 'exam', draw_count: 0, shuffle_options: 0 };
+
+async function getSettings(db, quizId, revision = false) {
+  const table = revision ? 'quiz_revision_settings' : 'quiz_settings';
+  return (await first(db, `SELECT mode, draw_count, shuffle_options FROM ${table} WHERE quiz_id = ?`, [quizId])) || defaultSettings;
+}
+
+function shuffle(items) {
+  const result = [...items];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const other = randomInt(index + 1);
+    [result[index], result[other]] = [result[other], result[index]];
+  }
+  return result;
+}
+
+function createPresentation(questions, settings) {
+  const count = Number(settings.draw_count) || questions.length;
+  const selected = count < questions.length ? shuffle(questions).slice(0, count) : [...questions];
+  return selected.map((question) => {
+    if (!settings.shuffle_options) return question;
+    const options = JSON.parse(question.options_json);
+    const order = shuffle([0, 1, 2, 3]);
+    return { ...question, options_json: JSON.stringify(order.map((index) => options[index])),
+      answer_index: order.indexOf(Number(question.answer_index)) };
+  });
+}
+
+async function getAssignment(db, quiz, uid) {
+  const existing = await first(db, 'SELECT * FROM quiz_assignments WHERE quiz_id = ? AND student_uid = ?', [quiz.id, uid]);
+  if (existing) return existing;
+  const settings = await getSettings(db, quiz.id);
+  const version = await currentVersion(db, quiz.id);
+  const questions = createPresentation(await getQuestions(db, quiz.id), settings);
+  await run(db, `INSERT OR IGNORE INTO quiz_assignments (id, quiz_id, student_uid, mode, version, questions_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`, [randomUUID(), quiz.id, uid, settings.mode, version, serializeQuestions(questions), new Date().toISOString()]);
+  return first(db, 'SELECT * FROM quiz_assignments WHERE quiz_id = ? AND student_uid = ?', [quiz.id, uid]);
+}
 
 async function getQuiz(db, lessonId) {
   return first(db, 'SELECT * FROM quizzes WHERE lesson_id = ?', [lessonId]);
@@ -32,6 +70,11 @@ async function questionsForVersion(db, quizId, version) {
   return snapshot ? deserializeQuestions(snapshot.questions_json) : getQuestions(db, quizId);
 }
 
+async function questionsForAttempt(db, attempt) {
+  const presentation = await first(db, 'SELECT questions_json FROM quiz_attempt_presentations WHERE attempt_id = ?', [attempt.id]);
+  return presentation ? deserializeQuestions(presentation.questions_json) : questionsForVersion(db, attempt.quiz_id, Number(attempt.version || 1));
+}
+
 async function studentAttempt(db, quizId, uid) {
   return first(db, `SELECT a.*, COALESCE(v.version, 1) AS version FROM quiz_attempts a
     LEFT JOIN quiz_attempt_versions v ON v.attempt_id = a.id
@@ -54,6 +97,20 @@ async function checkReviewAccess(identity, student, db, reviewId) {
   return { review, quiz };
 }
 
+async function reportAttempts(db, quizId, limit) {
+  return rows(db, `SELECT * FROM (
+    SELECT a.id, a.student_uid, COALESCE(s.student_name, a.student_uid) AS student_name,
+      a.answers_json, a.score, a.total, a.submitted_at, COALESCE(v.version, 1) AS version,
+      p.questions_json, 'exam' AS mode
+    FROM quiz_attempts a LEFT JOIN quiz_attempt_students s ON s.attempt_id = a.id
+      LEFT JOIN quiz_attempt_versions v ON v.attempt_id = a.id
+      LEFT JOIN quiz_attempt_presentations p ON p.attempt_id = a.id WHERE a.quiz_id = ?
+    UNION ALL
+    SELECT id, student_uid, student_name, answers_json, score, total, submitted_at,
+      version, questions_json, 'practice' AS mode FROM quiz_practice_attempts WHERE quiz_id = ?
+  ) ORDER BY submitted_at DESC LIMIT ?`, [quizId, quizId, limit]);
+}
+
 export async function handleGet(req, identity, db) {
   const action = String(req.query.action || 'quiz');
   if (action === 'adminList') {
@@ -70,7 +127,8 @@ export async function handleGet(req, identity, db) {
     if (!quiz) return { quiz: null, questions: [] };
     const revision = await first(db, 'SELECT * FROM quiz_revision_drafts WHERE quiz_id = ?', [quiz.id]);
     const questions = revision ? deserializeQuestions(revision.questions_json) : await getQuestions(db, quiz.id);
-    return { quiz: { ...quiz, hasRevisionDraft: !!revision }, draftTitle: revision?.title || null, questions: questions.map((question) => ({
+    const settings = await getSettings(db, quiz.id, !!revision);
+    return { quiz: { ...quiz, ...settings, hasRevisionDraft: !!revision }, draftTitle: revision?.title || null, questions: questions.map((question) => ({
       id: question.id, prompt: question.prompt, options: JSON.parse(question.options_json),
       answerIndex: question.answer_index, explanation: question.explanation,
     })) };
@@ -79,19 +137,21 @@ export async function handleGet(req, identity, db) {
     await requireAdmin(identity);
     const quiz = await getQuiz(db, cleanId(req.query.lessonId));
     if (!quiz) throw new HttpError(404, 'الاختبار غير موجود.');
-    const totals = await first(db, 'SELECT COUNT(*) AS count, ROUND(AVG(100.0 * score / NULLIF(total, 0))) AS average_percent FROM quiz_attempts WHERE quiz_id = ?', [quiz.id]);
-    const attempts = await rows(db, `SELECT a.id, a.student_uid, s.student_name, a.answers_json, a.score, a.total, a.submitted_at
-      FROM quiz_attempts a LEFT JOIN quiz_attempt_students s ON s.attempt_id = a.id
-      WHERE a.quiz_id = ? ORDER BY a.submitted_at DESC LIMIT 500`, [quiz.id]);
+    const totals = await first(db, `SELECT COUNT(*) AS count, COUNT(DISTINCT student_uid) AS students,
+      ROUND(AVG(100.0 * score / NULLIF(total, 0))) AS average_percent FROM (
+      SELECT student_uid, score, total FROM quiz_attempts WHERE quiz_id = ?
+      UNION ALL SELECT student_uid, score, total FROM quiz_practice_attempts WHERE quiz_id = ?)`, [quiz.id, quiz.id]);
+    const open = await first(db, `SELECT COUNT(*) AS count FROM quiz_assignments x WHERE quiz_id = ? AND NOT EXISTS (
+      SELECT 1 FROM quiz_attempts a WHERE a.quiz_id = x.quiz_id AND a.student_uid = x.student_uid
+      UNION SELECT 1 FROM quiz_practice_attempts p WHERE p.quiz_id = x.quiz_id AND p.student_uid = x.student_uid)`, [quiz.id]);
+    const attempts = await reportAttempts(db, quiz.id, 500);
     const versions = await rows(db, 'SELECT version, questions_json FROM quiz_versions WHERE quiz_id = ?', [quiz.id]);
     const snapshotByVersion = new Map(versions.map((row) => [Number(row.version), deserializeQuestions(row.questions_json)]));
-    const mapping = await rows(db, 'SELECT attempt_id, version FROM quiz_attempt_versions WHERE attempt_id IN (SELECT id FROM quiz_attempts WHERE quiz_id = ?)', [quiz.id]);
-    const versionByAttempt = new Map(mapping.map((row) => [row.attempt_id, Number(row.version)]));
     const fallback = await getQuestions(db, quiz.id);
     const questions = new Map();
     for (const attempt of attempts) {
-      const version = versionByAttempt.get(attempt.id) || 1;
-      const items = snapshotByVersion.get(version) || fallback;
+      const version = Number(attempt.version);
+      const items = attempt.questions_json ? deserializeQuestions(attempt.questions_json) : snapshotByVersion.get(version) || fallback;
       const answers = JSON.parse(attempt.answers_json);
       items.forEach((item, index) => {
         const key = `${version}:${item.id}`;
@@ -101,10 +161,28 @@ export async function handleGet(req, identity, db) {
         questions.set(key, stat);
       });
     }
+    const latestByStudent = new Map();
+    for (const item of attempts) if (!latestByStudent.has(item.student_uid)) latestByStudent.set(item.student_uid, item);
+    const needsReview = [...latestByStudent.values()].filter((item) => item.total && item.score / item.total < 0.6)
+      .sort((a, b) => a.score / a.total - b.score / b.total).slice(0, 30)
+      .map((item) => ({ studentUid: item.student_uid, studentName: item.student_name, score: item.score, total: item.total }));
     return { quiz: { id: quiz.id, title: quiz.title }, totalAttempts: Number(totals.count),
+      completedStudents: Number(totals.students), inProgressStudents: Number(open.count),
+      completionPercent: Number(totals.students) + Number(open.count) ? Math.round(100 * Number(totals.students) / (Number(totals.students) + Number(open.count))) : null,
       averagePercent: totals.average_percent == null ? null : Number(totals.average_percent), analyzedAttempts: attempts.length,
-      attempts: attempts.map((item) => ({ studentUid: item.student_uid, studentName: item.student_name || item.student_uid, score: item.score, total: item.total, submittedAt: item.submitted_at, version: versionByAttempt.get(item.id) || 1 })),
+      needsReview,
+      attempts: attempts.map((item) => ({ studentUid: item.student_uid, studentName: item.student_name || item.student_uid, score: item.score, total: item.total, submittedAt: item.submitted_at, version: Number(item.version), mode: item.mode })),
       questions: [...questions.values()].map((item) => ({ ...item, errorPercent: Math.round(100 * (item.total - item.correct) / item.total) })).sort((a, b) => b.errorPercent - a.errorPercent) };
+  }
+  if (action === 'adminExport') {
+    await requireAdmin(identity);
+    const quiz = await getQuiz(db, cleanId(req.query.lessonId));
+    if (!quiz) throw new HttpError(404, 'الاختبار غير موجود.');
+    const attempts = await reportAttempts(db, quiz.id, 10000);
+    return { title: quiz.title, truncated: attempts.length === 10000,
+      attempts: attempts.map((item) => ({ studentName: item.student_name, studentUid: item.student_uid,
+        mode: item.mode, score: Number(item.score), total: Number(item.total), submittedAt: item.submitted_at,
+        version: Number(item.version) })) };
   }
 
   const student = await requireStudent(identity);
@@ -113,14 +191,16 @@ export async function handleGet(req, identity, db) {
     if (!lessonIds.length) return { lessonIds: [] };
     const placeholders = lessonIds.map(() => '?').join(',');
     const published = await rows(db, `SELECT lesson_id FROM quizzes q WHERE (status = 'published' OR
-      (status = 'paused' AND EXISTS (SELECT 1 FROM quiz_attempts a WHERE a.quiz_id = q.id AND a.student_uid = ?)))
-      AND lesson_id IN (${placeholders})`, [identity.uid, ...lessonIds]);
+      (status = 'paused' AND (EXISTS (SELECT 1 FROM quiz_attempts a WHERE a.quiz_id = q.id AND a.student_uid = ?)
+        OR EXISTS (SELECT 1 FROM quiz_practice_attempts p WHERE p.quiz_id = q.id AND p.student_uid = ?))))
+      AND lesson_id IN (${placeholders})`, [identity.uid, identity.uid, ...lessonIds]);
     return { lessonIds: published.map((item) => item.lesson_id) };
   }
-  if (action === 'reviews') {
+  if (action === 'reviews' || action === 'pendingReviews') {
     const candidates = await rows(db, `SELECT r.id, r.quiz_id, r.step, r.due_at, r.completed_at, q.title, q.lesson_id
       FROM quiz_reviews r JOIN quizzes q ON q.id = r.quiz_id
-      WHERE r.student_uid = ? AND q.status IN ('published', 'paused') ORDER BY r.due_at LIMIT 100`, [identity.uid]);
+      WHERE r.student_uid = ? ${action === 'pendingReviews' ? 'AND r.completed_at IS NULL' : ''}
+      AND q.status IN ('published', 'paused') ORDER BY r.due_at LIMIT 100`, [identity.uid]);
     const accessible = [];
     const lessonAccess = new Map();
     for (const item of candidates) {
@@ -134,9 +214,12 @@ export async function handleGet(req, identity, db) {
     return { reviews: accessible };
   }
   if (action === 'history') {
-    const candidates = await rows(db, `SELECT a.score, a.total, a.submitted_at, q.title, q.lesson_id
-      FROM quiz_attempts a JOIN quizzes q ON q.id = a.quiz_id
-      WHERE a.student_uid = ? ORDER BY a.submitted_at DESC LIMIT 100`, [identity.uid]);
+    const candidates = await rows(db, `SELECT * FROM (
+      SELECT a.score, a.total, a.submitted_at, q.title, q.lesson_id, 'exam' AS mode
+      FROM quiz_attempts a JOIN quizzes q ON q.id = a.quiz_id WHERE a.student_uid = ?
+      UNION ALL SELECT p.score, p.total, p.submitted_at, q.title, q.lesson_id, 'practice' AS mode
+      FROM quiz_practice_attempts p JOIN quizzes q ON q.id = p.quiz_id WHERE p.student_uid = ?
+    ) ORDER BY submitted_at DESC LIMIT 100`, [identity.uid, identity.uid]);
     const history = [];
     const lessonAccess = new Map();
     for (const item of candidates) {
@@ -155,7 +238,7 @@ export async function handleGet(req, identity, db) {
     if (Date.parse(review.due_at) > Date.now()) throw new HttpError(403, 'موعد المراجعة لم يحن بعد.');
     const ids = JSON.parse(review.question_ids_json);
     const attempt = await studentAttempt(db, quiz.id, identity.uid);
-    const questions = (await questionsForVersion(db, quiz.id, Number(attempt?.version || 1))).filter((question) => ids.includes(question.id));
+    const questions = (await questionsForAttempt(db, attempt)).filter((question) => ids.includes(question.id));
     return { review: { id: review.id, step: review.step, dueAt: review.due_at }, quiz: { id: quiz.id, title: quiz.title }, questions: publicQuestions(questions) };
   }
   if (action !== 'quiz') throw new HttpError(400, 'طلب غير معروف.');
@@ -163,13 +246,21 @@ export async function handleGet(req, identity, db) {
   await requireLessonAccess(identity, student, lessonId);
   const quiz = await getQuiz(db, lessonId);
   if (!quiz || (quiz.status !== 'published' && quiz.status !== 'paused')) return { quiz: null };
+  const settings = await getSettings(db, quiz.id);
   const attempt = await studentAttempt(db, quiz.id, identity.uid);
-  if (quiz.status === 'paused' && !attempt) return { quiz: null };
-  const attemptQuestions = attempt ? await questionsForVersion(db, quiz.id, Number(attempt.version)) : null;
+  const lastPractice = settings.mode === 'practice' ? await first(db, `SELECT score, total, submitted_at FROM quiz_practice_attempts
+    WHERE quiz_id = ? AND student_uid = ? ORDER BY submitted_at DESC LIMIT 1`, [quiz.id, identity.uid]) : null;
+  if (quiz.status === 'paused' && !attempt && !lastPractice) return { quiz: null };
+  const isExam = settings.mode !== 'practice';
+  const assignment = quiz.status === 'published' && (!isExam || !attempt) ? await getAssignment(db, quiz, identity.uid) : null;
+  const attemptQuestions = attempt && isExam ? await questionsForAttempt(db, attempt) : null;
   return {
-    quiz: { id: quiz.id, lessonId, title: quiz.title, attempted: !!attempt, result: attempt ? { correct: attempt.score, total: attempt.total, submittedAt: attempt.submitted_at, version: Number(attempt.version) } : null },
-    questions: attempt ? [] : publicQuestions(await getQuestions(db, quiz.id)),
-    history: attempt ? correctionsFor(attemptQuestions, JSON.parse(attempt.answers_json)) : null,
+    quiz: { id: quiz.id, lessonId, title: quiz.title, mode: assignment?.mode || settings.mode,
+      assignmentKey: assignment?.id || null, attempted: isExam && !!attempt,
+      result: isExam && attempt ? { correct: attempt.score, total: attempt.total, submittedAt: attempt.submitted_at, version: Number(attempt.version) } : null,
+      lastPractice: lastPractice ? { correct: lastPractice.score, total: lastPractice.total, submittedAt: lastPractice.submitted_at } : null },
+    questions: assignment ? publicQuestions(deserializeQuestions(assignment.questions_json)) : [],
+    history: attemptQuestions ? correctionsFor(attemptQuestions, JSON.parse(attempt.answers_json)) : null,
   };
 }
 
@@ -183,12 +274,14 @@ export async function handleAdminPost(action, body, identity, db) {
     catch (error) { throw new HttpError(400, error.message); }
     const existing = await getQuiz(db, lessonId);
     if (existing && existing.status !== 'draft') {
-      await run(db, `INSERT INTO quiz_revision_drafts (quiz_id, title, questions_json, updated_at) VALUES (?, ?, ?, ?)
-        ON CONFLICT(quiz_id) DO UPDATE SET title = excluded.title, questions_json = excluded.questions_json, updated_at = excluded.updated_at`,
+      await db.batch([{ sql: `INSERT INTO quiz_revision_drafts (quiz_id, title, questions_json, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(quiz_id) DO UPDATE SET title = excluded.title, questions_json = excluded.questions_json, updated_at = excluded.updated_at`, args:
       [existing.id, input.title, JSON.stringify(input.questions.map((question, index) => ({
         id: randomUUID(), prompt: question.prompt, options_json: JSON.stringify(question.options),
         answer_index: question.answerIndex, explanation: question.explanation, sort_order: index,
-      }))), new Date().toISOString()]);
+      }))), new Date().toISOString()] }, { sql: `INSERT INTO quiz_revision_settings (quiz_id, mode, draw_count, shuffle_options) VALUES (?, ?, ?, ?)
+        ON CONFLICT(quiz_id) DO UPDATE SET mode = excluded.mode, draw_count = excluded.draw_count, shuffle_options = excluded.shuffle_options`,
+      args: [existing.id, input.mode, input.drawCount, Number(input.shuffleOptions)] }], 'write');
       return { quizId: existing.id, revisionDraft: true };
     }
     const id = existing?.id || randomUUID();
@@ -200,6 +293,9 @@ export async function handleAdminPost(action, body, identity, db) {
       sql: 'INSERT INTO quiz_questions (id, quiz_id, prompt, options_json, answer_index, explanation, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
       args: [randomUUID(), id, question.prompt, JSON.stringify(question.options), question.answerIndex, question.explanation, index],
     }));
+    statements.push({ sql: `INSERT INTO quiz_settings (quiz_id, mode, draw_count, shuffle_options) VALUES (?, ?, ?, ?)
+      ON CONFLICT(quiz_id) DO UPDATE SET mode = excluded.mode, draw_count = excluded.draw_count, shuffle_options = excluded.shuffle_options`,
+    args: [id, input.mode, input.drawCount, Number(input.shuffleOptions)] });
     await db.batch(statements, 'write');
     return { quizId: id };
   }
@@ -222,6 +318,10 @@ export async function handleAdminPost(action, body, identity, db) {
       questions.forEach((question) => statements.push({ sql: 'INSERT INTO quiz_questions (id, quiz_id, prompt, options_json, answer_index, explanation, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
         args: [question.id, quizId, question.prompt, question.options_json, question.answer_index, question.explanation, question.sort_order] }));
       statements.push({ sql: 'DELETE FROM quiz_revision_drafts WHERE quiz_id = ?', args: [quizId] });
+      const settings = await getSettings(db, quizId, true);
+      statements.push({ sql: 'UPDATE quiz_settings SET mode = ?, draw_count = ?, shuffle_options = ? WHERE quiz_id = ?',
+        args: [settings.mode, settings.draw_count, settings.shuffle_options, quizId] });
+      statements.push({ sql: 'DELETE FROM quiz_revision_settings WHERE quiz_id = ?', args: [quizId] });
     }
     statements.push({ sql: 'INSERT INTO quiz_versions (quiz_id, version, questions_json, published_at) VALUES (?, ?, ?, ?)', args: [quizId, version, serializeQuestions(questions), now] });
     statements.push({ sql: "UPDATE quizzes SET title = ?, status = 'published', updated_at = ? WHERE id = ?", args: [revision?.title || quiz.title, now, quizId] });
@@ -234,17 +334,23 @@ export async function handleAdminPost(action, body, identity, db) {
     return { status: action === 'pause' ? 'paused' : 'published' };
   }
   if (action === 'discardRevision') {
-    await run(db, 'DELETE FROM quiz_revision_drafts WHERE quiz_id = ?', [quizId]);
+    await db.batch([{ sql: 'DELETE FROM quiz_revision_drafts WHERE quiz_id = ?', args: [quizId] },
+      { sql: 'DELETE FROM quiz_revision_settings WHERE quiz_id = ?', args: [quizId] }], 'write');
     return { discarded: true };
   }
   if (action === 'delete') {
     await db.batch([
       { sql: 'DELETE FROM quiz_review_answers WHERE review_id IN (SELECT id FROM quiz_reviews WHERE quiz_id = ?)', args: [quizId] },
       { sql: 'DELETE FROM quiz_reviews WHERE quiz_id = ?', args: [quizId] },
+      { sql: 'DELETE FROM quiz_attempt_presentations WHERE attempt_id IN (SELECT id FROM quiz_attempts WHERE quiz_id = ?)', args: [quizId] },
       { sql: 'DELETE FROM quiz_attempt_students WHERE attempt_id IN (SELECT id FROM quiz_attempts WHERE quiz_id = ?)', args: [quizId] },
       { sql: 'DELETE FROM quiz_attempt_versions WHERE attempt_id IN (SELECT id FROM quiz_attempts WHERE quiz_id = ?)', args: [quizId] },
       { sql: 'DELETE FROM quiz_attempts WHERE quiz_id = ?', args: [quizId] },
       { sql: 'DELETE FROM quiz_revision_drafts WHERE quiz_id = ?', args: [quizId] },
+      { sql: 'DELETE FROM quiz_revision_settings WHERE quiz_id = ?', args: [quizId] },
+      { sql: 'DELETE FROM quiz_assignments WHERE quiz_id = ?', args: [quizId] },
+      { sql: 'DELETE FROM quiz_practice_attempts WHERE quiz_id = ?', args: [quizId] },
+      { sql: 'DELETE FROM quiz_settings WHERE quiz_id = ?', args: [quizId] },
       { sql: 'DELETE FROM quiz_versions WHERE quiz_id = ?', args: [quizId] },
       { sql: 'DELETE FROM quiz_questions WHERE quiz_id = ?', args: [quizId] },
       { sql: 'DELETE FROM quizzes WHERE id = ?', args: [quizId] },
@@ -261,16 +367,36 @@ export async function handleStudentPost(action, body, identity, db) {
     await requireLessonAccess(identity, student, lessonId);
     const quiz = await getQuiz(db, lessonId);
     if (!quiz || quiz.status !== 'published') throw new HttpError(404, 'الاختبار غير متاح.');
-    const questions = await getQuestions(db, quiz.id);
+    const assigned = await first(db, 'SELECT * FROM quiz_assignments WHERE quiz_id = ? AND student_uid = ?', [quiz.id, identity.uid]);
+    if (body.assignmentKey && body.assignmentKey !== assigned?.id) throw new HttpError(409, 'انتهت هذه المحاولة. حدّث الاختبار قبل التسليم.');
+    const assignment = assigned || await getAssignment(db, quiz, identity.uid);
+    const questions = deserializeQuestions(assignment.questions_json);
     let result;
     try { result = gradeAnswers(questions, body.answers); }
     catch (error) { throw new HttpError(400, error.message); }
     const now = Date.now();
     const attemptId = randomUUID();
-    const version = await currentVersion(db, quiz.id);
+    const version = Number(assignment.version);
+    if (assignment.mode === 'practice') {
+      try {
+        await db.batch([{ sql: `INSERT INTO quiz_practice_attempts
+          (id, quiz_id, student_uid, student_name, version, assignment_key, questions_json, answers_json, score, total, submitted_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, args: [attemptId, quiz.id, identity.uid,
+          String(student.name || student.username || identity.uid).slice(0, 140), version,
+          assignment.id, assignment.questions_json,
+          JSON.stringify(body.answers), result.correct, result.total, new Date(now).toISOString()] },
+        { sql: 'DELETE FROM quiz_assignments WHERE quiz_id = ? AND student_uid = ?', args: [quiz.id, identity.uid] }], 'write');
+      } catch (error) {
+        if (String(error.message).includes('UNIQUE')) throw new HttpError(409, 'أرسلت هذه المحاولة بالفعل. افتح محاولة جديدة.');
+        throw error;
+      }
+      return { result, version, reviewsDueAt: [], corrections: correctionsFor(questions, body.answers), mode: 'practice' };
+    }
     const statements = [{ sql: 'INSERT INTO quiz_attempts (id, quiz_id, student_uid, answers_json, score, total, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
       args: [attemptId, quiz.id, identity.uid, JSON.stringify(body.answers), result.correct, result.total, new Date(now).toISOString()] },
     { sql: 'INSERT INTO quiz_attempt_versions (attempt_id, version) VALUES (?, ?)', args: [attemptId, version] },
+    { sql: 'INSERT INTO quiz_attempt_presentations (attempt_id, questions_json) VALUES (?, ?)', args: [attemptId, assignment.questions_json] },
+    { sql: 'DELETE FROM quiz_assignments WHERE quiz_id = ? AND student_uid = ?', args: [quiz.id, identity.uid] },
     { sql: 'INSERT INTO quiz_attempt_students (attempt_id, student_name) VALUES (?, ?)', args: [attemptId, String(student.name || student.username || identity.uid).slice(0, 140)] }];
     if (result.wrongIds.length) reviewSchedule(now).forEach((dueAt, index) => statements.push({
       sql: 'INSERT INTO quiz_reviews (id, quiz_id, student_uid, question_ids_json, step, due_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -287,7 +413,7 @@ export async function handleStudentPost(action, body, identity, db) {
     if (Date.parse(review.due_at) > Date.now()) throw new HttpError(403, 'موعد المراجعة لم يحن بعد.');
     const ids = JSON.parse(review.question_ids_json);
     const attempt = await studentAttempt(db, quiz.id, identity.uid);
-    const questions = (await questionsForVersion(db, quiz.id, Number(attempt?.version || 1))).filter((question) => ids.includes(question.id));
+    const questions = (await questionsForAttempt(db, attempt)).filter((question) => ids.includes(question.id));
     let result;
     try { result = gradeAnswers(questions, body.answers); }
     catch (error) { throw new HttpError(400, error.message); }

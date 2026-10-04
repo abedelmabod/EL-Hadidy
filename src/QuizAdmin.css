@@ -40,9 +40,14 @@
 .qa-stats > div { border: 1px solid var(--qa-border); border-radius: 6px; padding: 12px; display: grid; gap: 4px; }
 .qa-stats strong { font-size: 22px; color: var(--qa-accent); }
 .qa-stats span { color: var(--qa-muted); font-size: 12px; }
+.qa-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: end; }
+.qa-settings .qa-checkbox { display: flex; align-items: center; gap: 9px; min-height: 42px; }
+.qa-checkbox input { width: auto; accent-color: var(--qa-accent); }
 .qa-report { border-block: 1px solid var(--qa-border); padding: 12px 0; }
 .qa-report summary { cursor: pointer; font-weight: 800; }
+.qa-report-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 14px; color: var(--qa-muted); }
+.qa-report-toolbar button { border: 1px solid var(--qa-border); border-radius: 6px; background: transparent; color: var(--qa-text); padding: 8px 12px; }
 .qa-report h4 { margin: 18px 0 8px; }
 .qa-report p { margin: 0; padding: 9px 0; display: flex; gap: 12px; justify-content: space-between; border-top: 1px solid var(--qa-border); overflow-wrap: anywhere; }
 .qa-report p strong { white-space: nowrap; color: var(--qa-accent); }
-@media (max-width: 800px) { .qa-layout { grid-template-columns: 1fr; } .qa-lesson-list { max-height: 230px; } .qa-options { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .qa-layout { grid-template-columns: 1fr; } .qa-lesson-list { max-height: 230px; } .qa-options, .qa-settings { grid-template-columns: 1fr; } }
