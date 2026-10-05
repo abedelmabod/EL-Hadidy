@@ -4,6 +4,7 @@ import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { activeCodeGrantsAccess } from './_quiz-domain.js';
+import { deviceProof, verifyDevice } from './_device-binding.js';
 
 let database;
 let schemaPromise;
@@ -34,6 +35,14 @@ export async function getDatabase() {
   }
   if (!schemaPromise) {
     schemaPromise = database.batch([
+      `CREATE TABLE IF NOT EXISTS student_device_bindings (
+        student_uid TEXT PRIMARY KEY, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL,
+        linked_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS student_revoked_devices (
+        student_uid TEXT NOT NULL, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL,
+        PRIMARY KEY (student_uid, device_hash, secret_hash)
+      )`,
       `CREATE TABLE IF NOT EXISTS quizzes (
         id TEXT PRIMARY KEY, lesson_id TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'draft', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -124,7 +133,7 @@ export async function identify(req) {
   const app = firebaseApp();
   const decoded = await getAuth(app).verifyIdToken(match[1], true).catch(() => { throw new HttpError(401, 'انتهت جلسة الدخول.'); });
   const store = getFirestore(app);
-  return { uid: decoded.uid, store };
+  return { uid: decoded.uid, store, deviceHeaders: req.headers };
 }
 
 async function findProfile(store, collection, uid) {
@@ -140,9 +149,20 @@ export async function requireAdmin(identity) {
   return profile;
 }
 
+export async function requireDeviceManager(identity) {
+  const profile = await findProfile(identity.store, 'admins', identity.uid)
+    || await findProfile(identity.store, 'support_team', identity.uid);
+  if (!profile || profile.isBanned) throw new HttpError(403, 'ليس لديك صلاحية تصفير الأجهزة.');
+  return profile;
+}
+
 export async function requireStudent(identity) {
   const profile = await findProfile(identity.store, 'students', identity.uid);
   if (!profile || profile.isBanned) throw new HttpError(403, 'الحساب غير مؤهل.');
+  if (identity.deviceHeaders) {
+    try { await verifyDevice(await getDatabase(), identity.uid, deviceProof(identity.deviceHeaders)); }
+    catch (error) { throw new HttpError(error.status || 503, 'هذا الحساب مرتبط بجهاز آخر أو يحتاج تحديث التطبيق.'); }
+  }
   return profile;
 }
 

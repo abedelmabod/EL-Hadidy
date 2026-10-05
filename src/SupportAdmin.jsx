@@ -12,6 +12,7 @@ import {
 import Swal from 'sweetalert2';
 import { db } from './firebase';
 import ThemeToggle from './ThemeToggle';
+import { resetStudentDevice } from './services/device-session';
 
 const YEAR_TABS = [
   'الكل',
@@ -217,6 +218,7 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
         lastDeviceId: '',
         lastDeviceLinkedAt: null,
       });
+      await resetStudentDevice(student.id);
       await logSupportAction(student, 'تصفير أجهزة الطالب من لوحة الدعم');
       showToast('تم تصفير الأجهزة');
     });
