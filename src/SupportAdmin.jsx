@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   addDoc,
   collection,
@@ -13,6 +13,7 @@ import Swal from 'sweetalert2';
 import { db } from './firebase';
 import ThemeToggle from './ThemeToggle';
 import { resetStudentDevice } from './services/device-session';
+import { changeStudentPassword } from './services/student-password';
 
 const YEAR_TABS = [
   'الكل',
@@ -52,6 +53,10 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
   const [deviceFilter, setDeviceFilter] = useState('all');
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [passwordDraft, setPasswordDraft] = useState('');
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const passwordInFlightRef = useRef(false);
+  const selectedStudentIdRef = useRef(selectedStudentId);
+  useEffect(() => { selectedStudentIdRef.current = selectedStudentId; setPasswordDraft(''); }, [selectedStudentId]);
   const [supportNote, setSupportNote] = useState('');
   const [issueType, setIssueType] = useState(ISSUE_TYPES[0]);
   const [priority, setPriority] = useState(PRIORITIES[0]);
@@ -89,7 +94,6 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
 
   useEffect(() => {
     if (!selectedStudent) return;
-    setPasswordDraft(selectedStudent.password || '');
     setSupportNote(selectedStudent.supportNote || '');
     setIssueType(selectedStudent.supportIssueType || ISSUE_TYPES[0]);
     setPriority(selectedStudent.supportPriority || PRIORITIES[0]);
@@ -242,7 +246,8 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
   };
 
   const changePassword = async (student) => {
-    const nextPassword = passwordDraft.trim();
+    if (passwordInFlightRef.current || !student) return;
+    const nextPassword = passwordDraft;
 
     if (!nextPassword) {
       Swal.fire({
@@ -255,11 +260,23 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
       return;
     }
 
-    await confirmAction('تغيير كلمة المرور؟', 'سيتم تحديث كلمة مرور الطالب داخل بيانات المنصة.', async () => {
-      await updateDoc(doc(db, 'students', student.id), { password: nextPassword });
-      await logSupportAction(student, 'تغيير كلمة مرور الطالب من لوحة الدعم');
-      showToast('تم تحديث كلمة المرور');
-    });
+    passwordInFlightRef.current = true;
+    setPasswordBusy(true);
+    try {
+      await confirmAction('تغيير كلمة المرور؟', `سيتم تغيير كلمة مرور تطبيق الطالب ${student.name || student.username || ''} في Firebase Authentication دون تغيير ربط الجهاز.`, async () => {
+        const result = await changeStudentPassword(student.id, nextPassword);
+        if (selectedStudentIdRef.current === student.id) setPasswordDraft('');
+        await Swal.fire({
+          icon: result.warnings?.length ? 'warning' : 'success',
+          title: 'تم تغيير كلمة المرور',
+          text: result.warnings?.length ? result.warnings.join('\n') : 'يمكن للطالب الدخول بكلمة المرور الجديدة دون الحاجة إلى Gmail.',
+          background: theme.surface, color: theme.text, confirmButtonColor: theme.accent,
+        });
+      });
+    } catch (error) {
+      await Swal.fire({ icon: 'error', title: 'تعذر تأكيد تغيير كلمة المرور', text: error.message,
+        background: theme.surface, color: theme.text, confirmButtonColor: theme.accent });
+    } finally { passwordInFlightRef.current = false; setPasswordBusy(false); }
   };
 
   const saveSupportCase = async (student) => {
@@ -692,16 +709,19 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
                 <div style={{ display: 'grid', gap: '10px' }}>
                   <div style={{ color: theme.accent, fontWeight: '900' }}>تغيير كلمة المرور</div>
                   <input
+                    type="password"
+                    autoComplete="new-password"
+                    disabled={passwordBusy}
                     value={passwordDraft}
                     onChange={(event) => setPasswordDraft(event.target.value)}
                     placeholder="كلمة المرور الجديدة"
                     style={inputStyle(theme)}
                   />
                   <p style={{ margin: 0, color: theme.muted, fontSize: '12px', lineHeight: 1.7 }}>
-                    ملاحظة: هذا يحدث كلمة المرور المخزنة في بيانات المنصة. لو تم الاعتماد بالكامل على Firebase Auth لاحقًا، ستحتاج هذه العملية لخدمة Backend آمنة.
+                    يغيّر كلمة مرور التطبيق فقط، دون الحاجة إلى Gmail ودون تصفير الجهاز.
                   </p>
-                  <button onClick={() => changePassword(selectedStudent)} style={primaryButton(theme)}>
-                    حفظ كلمة المرور
+                  <button disabled={passwordBusy} aria-busy={passwordBusy} onClick={() => changePassword(selectedStudent)} style={primaryButton(theme)}>
+                    {passwordBusy ? 'جارٍ تغيير كلمة المرور...' : 'حفظ كلمة المرور'}
                   </button>
                 </div>
 
