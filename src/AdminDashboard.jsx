@@ -6,7 +6,7 @@ import ThemeToggle from './ThemeToggle';
 import QuizAdmin from './QuizAdmin';
 import StudyPlanAdmin from './StudyPlanAdmin';
 import { keepEnglishDigitsOnly } from './services/auth-service';
-import { resetStudentDevice } from './services/device-session';
+import { resetStudentDevice, endStudentSession } from './services/device-session';
 
 const AdminDashboard = ({ 
   activeTab, setActiveTab, studentsDB = [], lessons = [], codesDB = [], logsDB = [], supportRequests = [],
@@ -856,6 +856,22 @@ const AdminDashboard = ({
       .forEach((student) => batch.update(doc(db, "students", student.id), buildStudentCodeAccess(student, nextCodes)));
   };
 
+  const invalidateCodeSessions = async (affectedCodes) => {
+    const affected = studentsDB.filter((student) => affectedCodes.some((code) => codeBelongsToStudent(code, student)));
+    const results = await Promise.allSettled(affected.map((student) => endStudentSession(student.id)));
+    if (results.some((result) => result.status === 'rejected')) {
+      await Swal.fire({ icon: 'warning', title: 'تم تعديل الأكواد', text: 'تعذر إنهاء بعض الجلسات النشطة. أعد إنهاء جلسات الطلاب المتأثرين من الدعم الفني.', background: theme.surface, color: theme.text });
+      return false;
+    }
+    return true;
+  };
+  const toggleStudentBan = async (student) => {
+    try {
+      await updateDoc(doc(db, 'students', student.id), { isBanned: !student.isBanned, banReason: !student.isBanned ? 'تم حظر الحساب بواسطة الإدارة' : '' });
+      if (!student.isBanned) await endStudentSession(student.id);
+    } catch { await Swal.fire({ icon: 'warning', title: 'راجع حالة الطالب', text: 'تعذر إكمال تحديث حالة الحساب والجلسة. أعد المحاولة من الدعم.' }); }
+  };
+
   const getCodeStatus = (code = {}) => {
     if (isCodePaused(code)) return "paused";
     if (code.isUsed) return "used";
@@ -871,6 +887,7 @@ const AdminDashboard = ({
     });
     syncAffectedStudents(batch, [code], codesDB.map((item) => item.id === code.id ? { ...item, isActive: !shouldPause } : item));
     await batch.commit();
+    if (!await invalidateCodeSessions([code])) return;
     Swal.fire({ icon: 'success', title: shouldPause ? 'تم إيقاف الكود مؤقتاً' : 'تم تفعيل الكود', background: theme.surface, color: theme.text });
   };
 
@@ -881,6 +898,7 @@ const AdminDashboard = ({
       batch.delete(doc(db, "codes", codeId));
       syncAffectedStudents(batch, [codeData], codesDB.filter((item) => item.id !== codeId));
       await batch.commit();
+      if (!await invalidateCodeSessions([codeData])) return;
       Swal.fire({ icon: 'success', title: 'تم الحذف والإلغاء', background: theme.surface, color: theme.text });
     }, true);
   };
@@ -913,6 +931,8 @@ const AdminDashboard = ({
             });
             await batch.commit();
           }
+          const results = await Promise.allSettled(studentsSnapshot.docs.map((student) => endStudentSession(student.id)));
+          if (results.some((result) => result.status === 'rejected')) throw new Error('Session invalidation failed');
           Swal.fire({ icon: 'success', title: 'تم التطهير بنجاح!', background: theme.surface, color: theme.text });
         } catch (e) { Swal.fire({ icon: 'error', title: 'فشلت العملية', background: theme.surface, color: theme.text }); }
       }, true);
@@ -1732,6 +1752,7 @@ const AdminDashboard = ({
         const selectedIds = new Set(selectedCodes.map((code) => code.id));
         syncAffectedStudents(batch, selectedCodes, codesDB.map((code) => selectedIds.has(code.id) ? { ...code, isActive: !shouldPause } : code));
         await batch.commit();
+        if (!await invalidateCodeSessions(selectedCodes)) return;
         clearSelectedCodes();
         Swal.fire({ icon: 'success', title: shouldPause ? 'تم إيقاف الأكواد المحددة' : 'تم تفعيل الأكواد المحددة', background: theme.surface, color: theme.text });
       },
@@ -1750,6 +1771,7 @@ const AdminDashboard = ({
       const selectedIds = new Set(selectedCodes.map((code) => code.id));
       syncAffectedStudents(batch, selectedCodes, codesDB.filter((code) => !selectedIds.has(code.id)));
       await batch.commit();
+      if (!await invalidateCodeSessions(selectedCodes)) return;
       clearSelectedCodes();
       Swal.fire({ icon: 'success', title: 'تم حذف الأكواد المحددة', background: theme.surface, color: theme.text });
     }, true);
@@ -3096,8 +3118,8 @@ const AdminDashboard = ({
                           <button title="عدد الأجهزة" onClick={() => updateStudentDeviceLimit(s)} className="btn-action btn-blue"><i className="fas fa-mobile-alt"></i></button>
                           <button title="تصفير الأجهزة" onClick={() => confirmAction('تصفير الأجهزة؟', 'سيتم حذف كل الأجهزة المسجلة لهذا الطالب.', async () => { await updateDoc(doc(db, "students", s.id), resetStudentDevicesPatch); await resetStudentDevice(s.id); })} className="btn-action btn-cyan"><i className="fas fa-sync-alt"></i></button>
                           <button title={isStudentScreenshotAllowed(s) ? 'منع تصوير الشاشة' : 'السماح بتصوير الشاشة'} onClick={() => toggleStudentScreenshotPermission(s)} className={`btn-action ${isStudentScreenshotAllowed(s) ? 'btn-orange' : 'btn-blue'}`}><i className={`fas ${isStudentScreenshotAllowed(s) ? 'fa-camera' : 'fa-camera-slash'}`}></i></button>
-                          <button title="حظر / فك حظر" onClick={() => updateDoc(doc(db, "students", s.id), { isBanned: !s.isBanned, banReason: !s.isBanned ? 'تم حظر الحساب بواسطة الإدارة' : '' })} className={`btn-action ${s.isBanned ? 'btn-green' : 'btn-orange'}`}><i className={`fas ${s.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i></button>
-                          <button title="حذف" onClick={() => confirmAction('حذف نهائي؟', '', () => deleteDoc(doc(db, "students", s.id)), true)} className="btn-action btn-red"><i className="fas fa-trash"></i></button>
+                          <button title="حظر / فك حظر" onClick={() => toggleStudentBan(s)} className={`btn-action ${s.isBanned ? 'btn-green' : 'btn-orange'}`}><i className={`fas ${s.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i></button>
+                          <button title="حذف" onClick={() => confirmAction('حذف نهائي؟', '', async () => { await endStudentSession(s.id); await deleteDoc(doc(db, "students", s.id)); }, true)} className="btn-action btn-red"><i className="fas fa-trash"></i></button>
                         </div>
                       </td>
                     </tr>
@@ -3334,8 +3356,8 @@ const AdminDashboard = ({
                 <button className="btn-action btn-blue" onClick={() => updateStudentDeviceLimit(selectedStudentProfile)}><i className="fas fa-mobile-alt"></i> عدد الأجهزة</button>
                 <button className="btn-action btn-cyan" onClick={() => confirmAction('تصفير الأجهزة؟', 'سيتم حذف كل الأجهزة المسجلة لهذا الطالب.', async () => { await updateDoc(doc(db, "students", selectedStudentProfile.id), resetStudentDevicesPatch); await resetStudentDevice(selectedStudentProfile.id); })}><i className="fas fa-sync-alt"></i> تصفير الأجهزة</button>
                 <button className={`btn-action ${isStudentScreenshotAllowed(selectedStudentProfile) ? 'btn-orange' : 'btn-blue'}`} onClick={() => toggleStudentScreenshotPermission(selectedStudentProfile)}><i className={`fas ${isStudentScreenshotAllowed(selectedStudentProfile) ? 'fa-camera' : 'fa-camera-slash'}`}></i> {isStudentScreenshotAllowed(selectedStudentProfile) ? 'منع التصوير' : 'السماح بالتصوير'}</button>
-                <button className={`btn-action ${selectedStudentProfile.isBanned ? 'btn-green' : 'btn-orange'}`} onClick={() => updateDoc(doc(db, "students", selectedStudentProfile.id), { isBanned: !selectedStudentProfile.isBanned, banReason: !selectedStudentProfile.isBanned ? 'تم حظر الحساب بواسطة الإدارة' : '' })}><i className={`fas ${selectedStudentProfile.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i> {selectedStudentProfile.isBanned ? 'فك الحظر' : 'حظر الطالب'}</button>
-                <button className="btn-action btn-red" onClick={() => confirmAction('حذف الطالب نهائياً؟', '', async () => { await deleteDoc(doc(db, "students", selectedStudentProfile.id)); setSelectedStudentId(null); }, true)}><i className="fas fa-trash"></i> حذف</button>
+                <button className={`btn-action ${selectedStudentProfile.isBanned ? 'btn-green' : 'btn-orange'}`} onClick={() => toggleStudentBan(selectedStudentProfile)}><i className={`fas ${selectedStudentProfile.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i> {selectedStudentProfile.isBanned ? 'فك الحظر' : 'حظر الطالب'}</button>
+                <button className="btn-action btn-red" onClick={() => confirmAction('حذف الطالب نهائياً؟', '', async () => { await endStudentSession(selectedStudentProfile.id); await deleteDoc(doc(db, "students", selectedStudentProfile.id)); setSelectedStudentId(null); }, true)}><i className="fas fa-trash"></i> حذف</button>
               </div>
 
               <div className="profile-activity">

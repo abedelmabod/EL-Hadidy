@@ -46,7 +46,7 @@ export function passwordServiceError(error) {
   return new HttpError(503, 'تعذر الاتصال بخدمة تغيير كلمة المرور. حاول مرة أخرى.');
 }
 
-export async function changeStudentPassword(identity, firebaseAuth, body) {
+export async function changeStudentPassword(identity, firebaseAuth, body, revokeSession) {
   const actor = await requirePasswordManager(identity);
   const { studentId, password } = body || {};
   if (typeof studentId !== 'string' || !studentId || studentId.length > 128 || studentId.includes('/')) {
@@ -72,6 +72,10 @@ export async function changeStudentPassword(identity, firebaseAuth, body) {
 
   // The password is already changed. Cleanup/audit failures must not be reported as a failed reset.
   const warnings = [];
+  if (revokeSession) {
+    try { await revokeSession(uid); }
+    catch { warnings.push('تم تغيير الباسورد، لكن تعذر إنهاء جلسة الجهاز. أنهِ الجلسة من الدعم الفني.'); }
+  }
   try { await ref.update({ password: FieldValue.delete() }); }
   catch { warnings.push('تم تغيير الباسورد، لكن تعذر حذف حقل الباسورد القديم من بيانات الطالب.'); }
   try {

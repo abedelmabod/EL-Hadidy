@@ -61,6 +61,25 @@ const reset = (f, password = ' NewSecret1! ') => changeStudentPassword(f.identit
   studentId: 'student', password, uid: 'untrusted-browser-uid',
 });
 
+test('password reset ends the server-derived student session after Auth succeeds', async () => {
+  const f = fixture();
+  const result = await changeStudentPassword(f.identity, f.auth, { studentId: 'student', password: 'NewSecret1!' }, async (uid) => {
+    assert.equal(uid, 'auth-student');
+    assert.equal(f.authUpdates.length, 1);
+  });
+  assert.deepEqual(result, { passwordChanged: true, warnings: [] });
+});
+
+test('failed session termination reports partial success after a password reset', async () => {
+  const f = fixture();
+  const result = await changeStudentPassword(f.identity, f.auth, { studentId: 'student', password: 'NewSecret1!' }, async () => { throw new Error('offline'); });
+  assert.equal(result.passwordChanged, true);
+  assert.equal(result.warnings.length, 1);
+  assert.equal(f.authUpdates.length, 1);
+  assert.equal(f.updates.length, 1);
+  assert.equal(f.logs.length, 1);
+});
+
 for (const role of ['admin', 'support']) {
   test(`${role} resets the server-derived Auth account without altering other data`, async () => {
     const f = fixture({ role });

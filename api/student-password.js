@@ -1,5 +1,5 @@
 import { getAuth } from 'firebase-admin/auth';
-import { firebaseApp, HttpError, identify } from './_quiz-server.js';
+import { firebaseApp, getDatabase, HttpError, identify } from './_quiz-server.js';
 import { changeStudentPassword, passwordServiceError } from './_student-password.js';
 
 export default async function handler(req, res) {
@@ -8,7 +8,10 @@ export default async function handler(req, res) {
   try {
     const identity = await identify(req);
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
-    const result = await changeStudentPassword(identity, getAuth(firebaseApp()), body);
+    const result = await changeStudentPassword(identity, getAuth(firebaseApp()), body, async (uid) => {
+      const db = await getDatabase();
+      await db.execute({ sql: 'DELETE FROM student_active_sessions WHERE student_uid = ?', args: [uid] });
+    });
     return res.status(200).json(result);
   } catch (error) {
     if (error instanceof SyntaxError) return res.status(400).json({ error: 'بيانات الطلب غير صالحة.' });

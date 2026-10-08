@@ -4,7 +4,8 @@ import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { activeCodeGrantsAccess } from './_quiz-domain.js';
-import { deviceProof, verifyDevice } from './_device-binding.js';
+import { deviceProof } from './_device-binding.js';
+import { sessionSchema, verifySession } from './_student-session.js';
 
 let database;
 let schemaPromise;
@@ -35,6 +36,7 @@ export async function getDatabase() {
   }
   if (!schemaPromise) {
     schemaPromise = database.batch([
+      ...sessionSchema,
       `CREATE TABLE IF NOT EXISTS student_device_bindings (
         student_uid TEXT PRIMARY KEY, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL,
         linked_at TEXT NOT NULL
@@ -128,6 +130,12 @@ export async function getDatabase() {
 }
 
 export async function identify(req) {
+  if (req.headers['x-student-session']) {
+    try {
+      const session = await verifySession(await getDatabase(), req.headers, deviceProof(req.headers));
+      return { uid: session.uid, store: getFirestore(firebaseApp()), sessionProfile: session.profile, deviceHeaders: req.headers };
+    } catch (error) { throw new HttpError(error.status || 503, 'انتهت جلسة الجهاز. سجّل الدخول مرة أخرى.'); }
+  }
   const match = /^Bearer (.+)$/i.exec(req.headers.authorization || '');
   if (!match) throw new HttpError(401, 'سجّل الدخول أولًا.');
   const app = firebaseApp();
@@ -157,11 +165,14 @@ export async function requireDeviceManager(identity) {
 }
 
 export async function requireStudent(identity) {
+  if (identity.sessionProfile) {
+    if (identity.sessionProfile.isBanned) throw new HttpError(403, 'الحساب محظور.');
+    return identity.sessionProfile;
+  }
   const profile = await findProfile(identity.store, 'students', identity.uid);
   if (!profile || profile.isBanned) throw new HttpError(403, 'الحساب غير مؤهل.');
   if (identity.deviceHeaders) {
-    try { await verifyDevice(await getDatabase(), identity.uid, deviceProof(identity.deviceHeaders)); }
-    catch (error) { throw new HttpError(error.status || 503, 'هذا الحساب مرتبط بجهاز آخر أو يحتاج تحديث التطبيق.'); }
+    throw new HttpError(401, 'حدّث التطبيق وسجّل الدخول لتفعيل جلسة الجهاز.');
   }
   return profile;
 }

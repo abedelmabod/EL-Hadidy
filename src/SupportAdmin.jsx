@@ -12,7 +12,7 @@ import {
 import Swal from 'sweetalert2';
 import { db } from './firebase';
 import ThemeToggle from './ThemeToggle';
-import { resetStudentDevice } from './services/device-session';
+import { resetStudentDevice, endStudentSession, allowStudentDesktop } from './services/device-session';
 import { changeStudentPassword } from './services/student-password';
 
 const YEAR_TABS = [
@@ -238,6 +238,7 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
           isBanned: willBan,
           banReason: willBan ? 'حظر يدوي من الدعم الفني' : '',
         });
+        if (willBan) await endStudentSession(student.id);
         await logSupportAction(student, willBan ? 'حظر الطالب من لوحة الدعم' : 'إلغاء حظر الطالب من لوحة الدعم');
         showToast(willBan ? 'تم حظر الطالب' : 'تم إلغاء الحظر');
       },
@@ -697,9 +698,24 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
 
                 <div style={{ display: 'grid', gap: '10px' }}>
                   <div style={{ color: theme.accent, fontWeight: '900' }}>إجراءات الحساب</div>
+                    <button onClick={() => confirmAction('السماح بنسخة الكمبيوتر؟', 'سيحتاج الطالب لتسجيل الخروج من الهاتف قبل الدخول من الكمبيوتر.', async () => {
+                      await allowStudentDesktop(selectedStudent.id, true);
+                      showToast('تم السماح بنسخة الكمبيوتر');
+                    })} style={outlineButton(theme.info)}>السماح بنسخة الكمبيوتر</button>
+                    <button onClick={() => confirmAction('إلغاء نسخة الكمبيوتر؟', 'سيتم إنهاء الجلسة النشطة وإلغاء السماح.', async () => {
+                      await allowStudentDesktop(selectedStudent.id, false);
+                      showToast('تم إلغاء نسخة الكمبيوتر');
+                    })} style={outlineButton(theme.danger)}>إلغاء السماح بنسخة الكمبيوتر</button>
                   <button onClick={() => resetDevice(selectedStudent)} style={outlineButton(theme.info)}>
                     <i className="fas fa-sync-alt"></i> تصفير الأجهزة
                   </button>
+                    <button onClick={() => confirmAction('إنهاء جلسة الطالب؟', 'يسمح بالتبديل بين الهاتف والكمبيوتر بدون تصفير الجهاز.', async () => {
+                      await endStudentSession(selectedStudent.id);
+                      await logSupportAction(selectedStudent, 'إنهاء جلسة الطالب النشطة');
+                      showToast('تم إنهاء الجلسة');
+                    })} style={outlineButton(theme.info)}>
+                      <i className="fas fa-sign-out-alt"></i> إنهاء الجلسة العالقة
+                    </button>
                   <button onClick={() => toggleBan(selectedStudent)} style={outlineButton(selectedStudent.isBanned ? theme.success : theme.danger)}>
                     <i className={`fas ${selectedStudent.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i>
                     {selectedStudent.isBanned ? 'إلغاء الحظر' : 'حظر الطالب'}
