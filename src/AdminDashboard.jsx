@@ -1036,14 +1036,16 @@ const AdminDashboard = ({
     });
   };
 
-  const resetStudentDevicesPatch = {
-    deviceId: null,
-    deviceIds: [],
-    deviceCount: 0,
-    deviceType: null,
-    deviceInfo: null,
-    lastDeviceId: "",
-    lastDeviceLinkedAt: null,
+  const handleResetStudentDevices = async (studentId) => {
+    try {
+      const result = await resetStudentDevice(studentId);
+      await Swal.fire({ icon: result.warnings.length ? 'warning' : 'success', title: 'تم تصفير الأجهزة',
+        text: result.warnings.length ? result.warnings.join('\n') : 'يمكن للطالب تسجيل الدخول وربط جهازه الآن.',
+        background: theme.surface, color: theme.text });
+    } catch (error) {
+      await Swal.fire({ icon: 'error', title: 'تعذر تأكيد تصفير الأجهزة', text: error.message,
+        background: theme.surface, color: theme.text });
+    }
   };
 
   const updateStudentDeviceLimit = async (student) => {
@@ -3116,7 +3118,7 @@ const AdminDashboard = ({
                         <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
                           <button title="فتح البروفايل" onClick={() => setSelectedStudentId(s.id)} className="btn-action btn-green"><i className="fas fa-id-card"></i></button>
                           <button title="عدد الأجهزة" onClick={() => updateStudentDeviceLimit(s)} className="btn-action btn-blue"><i className="fas fa-mobile-alt"></i></button>
-                          <button title="تصفير الأجهزة" onClick={() => confirmAction('تصفير الأجهزة؟', 'سيتم حذف كل الأجهزة المسجلة لهذا الطالب.', async () => { await updateDoc(doc(db, "students", s.id), resetStudentDevicesPatch); await resetStudentDevice(s.id); })} className="btn-action btn-cyan"><i className="fas fa-sync-alt"></i></button>
+                          <button title="تصفير الأجهزة" onClick={() => confirmAction('تصفير الأجهزة؟', 'سيتم إنهاء الجلسة الحالية والسماح بربط جهاز جديد عند تسجيل الدخول التالي.', () => handleResetStudentDevices(s.id))} className="btn-action btn-cyan"><i className="fas fa-sync-alt"></i></button>
                           <button title={isStudentScreenshotAllowed(s) ? 'منع تصوير الشاشة' : 'السماح بتصوير الشاشة'} onClick={() => toggleStudentScreenshotPermission(s)} className={`btn-action ${isStudentScreenshotAllowed(s) ? 'btn-orange' : 'btn-blue'}`}><i className={`fas ${isStudentScreenshotAllowed(s) ? 'fa-camera' : 'fa-camera-slash'}`}></i></button>
                           <button title="حظر / فك حظر" onClick={() => toggleStudentBan(s)} className={`btn-action ${s.isBanned ? 'btn-green' : 'btn-orange'}`}><i className={`fas ${s.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i></button>
                           <button title="حذف" onClick={() => confirmAction('حذف نهائي؟', '', async () => { await endStudentSession(s.id); await deleteDoc(doc(db, "students", s.id)); }, true)} className="btn-action btn-red"><i className="fas fa-trash"></i></button>
@@ -3354,7 +3356,7 @@ const AdminDashboard = ({
 
               <div className="profile-actions">
                 <button className="btn-action btn-blue" onClick={() => updateStudentDeviceLimit(selectedStudentProfile)}><i className="fas fa-mobile-alt"></i> عدد الأجهزة</button>
-                <button className="btn-action btn-cyan" onClick={() => confirmAction('تصفير الأجهزة؟', 'سيتم حذف كل الأجهزة المسجلة لهذا الطالب.', async () => { await updateDoc(doc(db, "students", selectedStudentProfile.id), resetStudentDevicesPatch); await resetStudentDevice(selectedStudentProfile.id); })}><i className="fas fa-sync-alt"></i> تصفير الأجهزة</button>
+                <button className="btn-action btn-cyan" onClick={() => confirmAction('تصفير الأجهزة؟', 'سيتم إنهاء الجلسة الحالية والسماح بربط جهاز جديد عند تسجيل الدخول التالي.', () => handleResetStudentDevices(selectedStudentProfile.id))}><i className="fas fa-sync-alt"></i> تصفير الأجهزة</button>
                 <button className={`btn-action ${isStudentScreenshotAllowed(selectedStudentProfile) ? 'btn-orange' : 'btn-blue'}`} onClick={() => toggleStudentScreenshotPermission(selectedStudentProfile)}><i className={`fas ${isStudentScreenshotAllowed(selectedStudentProfile) ? 'fa-camera' : 'fa-camera-slash'}`}></i> {isStudentScreenshotAllowed(selectedStudentProfile) ? 'منع التصوير' : 'السماح بالتصوير'}</button>
                 <button className={`btn-action ${selectedStudentProfile.isBanned ? 'btn-green' : 'btn-orange'}`} onClick={() => toggleStudentBan(selectedStudentProfile)}><i className={`fas ${selectedStudentProfile.isBanned ? 'fa-unlock' : 'fa-ban'}`}></i> {selectedStudentProfile.isBanned ? 'فك الحظر' : 'حظر الطالب'}</button>
                 <button className="btn-action btn-red" onClick={() => confirmAction('حذف الطالب نهائياً؟', '', async () => { await endStudentSession(selectedStudentProfile.id); await deleteDoc(doc(db, "students", selectedStudentProfile.id)); setSelectedStudentId(null); }, true)}><i className="fas fa-trash"></i> حذف</button>

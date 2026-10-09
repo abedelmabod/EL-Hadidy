@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { DeviceBindingError } from './_device-binding.js';
+import { DeviceBindingError, bindDeviceInTransaction, deviceResetStatements } from './_device-binding.js';
 
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 const matches = (a, b) => typeof a === 'string' && typeof b === 'string'
@@ -8,6 +8,8 @@ export const sessionSchema = [
   `CREATE TABLE IF NOT EXISTS student_desktop_permissions (student_uid TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0)`,
   `CREATE TABLE IF NOT EXISTS student_desktop_bindings (
     student_uid TEXT PRIMARY KEY, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL, linked_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS student_desktop_reset_grants (
+    student_uid TEXT PRIMARY KEY, granted_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS student_active_sessions (
     student_uid TEXT PRIMARY KEY, platform TEXT NOT NULL, device_hash TEXT NOT NULL,
     secret_hash TEXT NOT NULL, token_hash TEXT NOT NULL, profile_json TEXT NOT NULL,
@@ -32,21 +34,28 @@ export function publicProfile(profile) {
   return Object.fromEntries(keys.filter((key) => profile[key] !== undefined).map((key) => [key, profile[key]]));
 }
 
-export async function claimSession(db, uid, proof, platform, profile) {
+export async function claimSession(db, uid, proof, platform, profile, { legacyIds = [] } = {}) {
   const token = randomBytes(32).toString('base64url');
   const tx = await db.transaction('write');
   try {
     const existing = (await tx.execute({ sql: 'SELECT * FROM student_active_sessions WHERE student_uid = ?', args: [uid] })).rows[0];
     if (existing && (existing.platform !== platform || !matches(existing.device_hash, proof.idHash)
       || !matches(existing.secret_hash, proof.secretHash))) throw new DeviceBindingError('SESSION_ACTIVE', 409);
+    if (platform === 'mobile') await bindDeviceInTransaction(tx, uid, proof, legacyIds);
     if (platform === 'windows') {
       const permission = (await tx.execute({ sql: 'SELECT enabled FROM student_desktop_permissions WHERE student_uid = ?', args: [uid] })).rows[0];
       if (!permission?.enabled) throw new DeviceBindingError('DESKTOP_NOT_APPROVED');
+      const resetGrant = (await tx.execute({ sql: 'SELECT 1 FROM student_desktop_reset_grants WHERE student_uid = ?', args: [uid] })).rows[0];
       const revoked = (await tx.execute({ sql: 'SELECT 1 FROM student_revoked_devices WHERE student_uid = ? AND device_hash = ? AND secret_hash = ?', args: [uid, proof.idHash, proof.secretHash] })).rows[0];
-      if (revoked) throw new DeviceBindingError('DEVICE_MISMATCH');
+      if (revoked && !resetGrant) throw new DeviceBindingError('DEVICE_MISMATCH');
       const bound = (await tx.execute({ sql: 'SELECT * FROM student_desktop_bindings WHERE student_uid = ?', args: [uid] })).rows[0];
       if (bound && (!matches(bound.device_hash, proof.idHash) || !matches(bound.secret_hash, proof.secretHash))) throw new DeviceBindingError('DEVICE_MISMATCH');
       if (!bound) await tx.execute({ sql: 'INSERT INTO student_desktop_bindings VALUES (?, ?, ?, ?)', args: [uid, proof.idHash, proof.secretHash, new Date().toISOString()] });
+      if (resetGrant) {
+        await tx.execute({ sql: `DELETE FROM student_revoked_devices
+          WHERE student_uid = ? AND device_hash = ? AND secret_hash = ?`, args: [uid, proof.idHash, proof.secretHash] });
+        await tx.execute({ sql: 'DELETE FROM student_desktop_reset_grants WHERE student_uid = ?', args: [uid] });
+      }
     }
     const now = new Date().toISOString();
     await tx.execute({ sql: `INSERT INTO student_active_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -94,10 +103,20 @@ export async function releaseSession(db, session) {
   await db.execute({ sql: 'DELETE FROM student_active_sessions WHERE student_uid = ? AND token_hash = ?', args: [session.uid, session.tokenHash] });
 }
 
-export async function resetSessions(db, uid) {
-  await db.batch([
+function sessionResetStatements(uid) {
+  return [
     { sql: `INSERT OR IGNORE INTO student_revoked_devices SELECT student_uid, device_hash, secret_hash FROM student_desktop_bindings WHERE student_uid = ?`, args: [uid] },
     { sql: 'DELETE FROM student_desktop_bindings WHERE student_uid = ?', args: [uid] },
     { sql: 'DELETE FROM student_active_sessions WHERE student_uid = ?', args: [uid] },
-  ], 'write');
+    { sql: `INSERT INTO student_desktop_reset_grants VALUES (?, ?)
+      ON CONFLICT(student_uid) DO UPDATE SET granted_at = excluded.granted_at`, args: [uid, new Date().toISOString()] },
+  ];
+}
+
+export async function resetSessions(db, uid) {
+  await db.batch(sessionResetStatements(uid), 'write');
+}
+
+export async function resetStudentDevices(db, uid) {
+  await db.batch([...deviceResetStatements(uid), ...sessionResetStatements(uid)], 'write');
 }

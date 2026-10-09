@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClient } from '@libsql/client';
-import { deviceProof } from '../api/_device-binding.js';
-import { claimSession, sessionSchema, verifySession, releaseSession, publicProfile, resetSessions, clientPlatform, verifyLegacyMobileSession } from '../api/_student-session.js';
+import { deviceProof, deviceBindingSchema } from '../api/_device-binding.js';
+import { claimSession, sessionSchema, verifySession, releaseSession, publicProfile, resetSessions, resetStudentDevices, clientPlatform, verifyLegacyMobileSession } from '../api/_student-session.js';
 
 const headers = (platform, id, secret) => ({ 'x-client-platform': platform, 'x-device-id': id, 'x-device-secret': secret.repeat(64) });
 const phone = headers('mobile', 'phone_installation', 'a');
 const pc = headers('windows', 'desktop_installation', 'b');
 async function setup() {
   const db = createClient({ url: 'file::memory:' });
-  await db.batch([...sessionSchema, `CREATE TABLE student_revoked_devices (student_uid TEXT, device_hash TEXT, secret_hash TEXT, PRIMARY KEY(student_uid, device_hash, secret_hash))`], 'write');
+  await db.batch([...sessionSchema, ...deviceBindingSchema], 'write');
   await db.execute("INSERT INTO student_desktop_permissions VALUES ('student', 1)");
   return db;
 }
@@ -17,8 +17,6 @@ const profile = { id: 'student', name: 'Student', password: 'DO-NOT-EXPOSE', aut
 test('legacy Firebase identity and proof only verify an existing matching mobile lease', async () => {
   const db = await setup();
   try {
-    await db.execute(`CREATE TABLE student_device_bindings (
-      student_uid TEXT PRIMARY KEY, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL, linked_at TEXT NOT NULL)`);
     const { bindDevice } = await import('../api/_device-binding.js');
     const legacy = { 'x-device-id': 'legacy_installation_123', 'x-device-secret': 'f'.repeat(64) };
     const proof = deviceProof(legacy);
@@ -85,8 +83,6 @@ test('legacy phone still needs its secret and lease, and cannot displace Windows
 test('legacy non-UUID installation retains all binding and session checks', async () => {
   const db = await setup();
   try {
-    await db.execute(`CREATE TABLE student_device_bindings (
-      student_uid TEXT PRIMARY KEY, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL, linked_at TEXT NOT NULL)`);
     const { bindDevice, resetDevice } = await import('../api/_device-binding.js');
     const legacy = { 'x-device-id': 'persisted_installation_123', 'x-device-secret': 'e'.repeat(64) };
     const proof = deviceProof(legacy);
@@ -100,7 +96,7 @@ test('legacy non-UUID installation retains all binding and session checks', asyn
     await assert.rejects(claimSession(db, 'student', deviceProof(pc), 'windows', profile), { code: 'SESSION_ACTIVE' });
     await resetDevice(db, 'student');
     await resetSessions(db, 'student');
-    await assert.rejects(bindDevice(db, 'student', proof), { code: 'DEVICE_MISMATCH' });
+    await bindDevice(db, 'student', proof);
     await assert.rejects(verifySession(db, signed, proof), { code: 'SESSION_REVOKED' });
   } finally { db.close(); }
 });
@@ -145,13 +141,54 @@ test('heartbeat cannot claim, copy credentials to another device, or switch plat
     await assert.rejects(claimSession(db, 'student', deviceProof(pc), 'windows', profile), { code: 'SESSION_ACTIVE' });
   } finally { db.close(); }
 });
-test('reset revokes the old desktop token and proof without changing mobile binding', async () => {
+test('authorized reset revokes the old desktop token and permits the same computer once', async () => {
   const db = await setup();
   try {
     const result = await claimSession(db, 'student', deviceProof(pc), 'windows', profile);
     await resetSessions(db, 'student');
     await assert.rejects(verifySession(db, { ...pc, 'x-student-session': result.sessionToken }, deviceProof(pc)), { code: 'SESSION_REVOKED' });
-    await assert.rejects(claimSession(db, 'student', deviceProof(pc), 'windows', profile), { code: 'DEVICE_MISMATCH' });
+    const fresh = await claimSession(db, 'student', deviceProof(pc), 'windows', profile);
+    assert.notEqual(fresh.sessionToken, result.sessionToken);
+    assert.equal((await verifySession(db, { ...pc, 'x-student-session': fresh.sessionToken }, deviceProof(pc))).uid, 'student');
+    await assert.rejects(verifySession(db, { ...pc, 'x-student-session': result.sessionToken }, deviceProof(pc)), { code: 'SESSION_REVOKED' });
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_desktop_reset_grants')).rows[0].n, 0);
+  } finally { db.close(); }
+});
+
+test('a Windows reset grant does not bypass approval or allow a second computer', async () => {
+  const db = await setup();
+  try {
+    await claimSession(db, 'student', deviceProof(pc), 'windows', profile);
+    await resetStudentDevices(db, 'student');
+    await db.execute("UPDATE student_desktop_permissions SET enabled = 0 WHERE student_uid = 'student'");
+    await assert.rejects(claimSession(db, 'student', deviceProof(pc), 'windows', profile), { code: 'DESKTOP_NOT_APPROVED' });
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_desktop_reset_grants')).rows[0].n, 1);
+    await db.execute("UPDATE student_desktop_permissions SET enabled = 1 WHERE student_uid = 'student'");
+    const replacement = headers('windows', 'replacement_computer', 'z');
+    const results = await Promise.allSettled([
+      claimSession(db, 'student', deviceProof(pc), 'windows', profile),
+      claimSession(db, 'student', deviceProof(replacement), 'windows', profile),
+    ]);
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    const active = (await db.execute('SELECT * FROM student_active_sessions')).rows[0];
+    const winningHeaders = active.device_hash === deviceProof(pc).idHash ? pc : replacement;
+    const losingHeaders = winningHeaders === pc ? replacement : pc;
+    await releaseSession(db, { uid: 'student', tokenHash: active.token_hash });
+    await assert.rejects(claimSession(db, 'student', deviceProof(losingHeaders), 'windows', profile), { code: 'DEVICE_MISMATCH' });
+    await claimSession(db, 'student', deviceProof(winningHeaders), 'windows', profile);
+  } finally { db.close(); }
+});
+
+test('desktop reset and phone login preserve exclusive platform sessions', async () => {
+  const db = await setup();
+  try {
+    await claimSession(db, 'student', deviceProof(pc), 'windows', profile);
+    await resetStudentDevices(db, 'student');
+    const mobile = await claimSession(db, 'student', deviceProof(phone), 'mobile', profile);
+    await assert.rejects(claimSession(db, 'student', deviceProof(pc), 'windows', profile), { code: 'SESSION_ACTIVE' });
+    await releaseSession(db, await verifySession(db, { ...phone, 'x-student-session': mobile.sessionToken }, deviceProof(phone)));
+    await claimSession(db, 'student', deviceProof(pc), 'windows', profile);
+    await assert.rejects(claimSession(db, 'student', deviceProof(phone), 'mobile', profile), { code: 'SESSION_ACTIVE' });
   } finally { db.close(); }
 });
 
@@ -165,5 +202,72 @@ test('an expired session cannot read content or permit a platform switch without
     await assert.rejects(claimSession(db, 'student', deviceProof(pc), 'windows', profile), { code: 'SESSION_ACTIVE' });
     await releaseSession(db, await verifySession(db, signed, deviceProof(phone), { allowExpired: true }));
     await claimSession(db, 'student', deviceProof(pc), 'windows', profile);
+  } finally { db.close(); }
+});
+
+test('authorized full reset invalidates the old lease and allows a fresh lease on the same phone', async () => {
+  const db = await setup();
+  try {
+    const proof = deviceProof(phone);
+    const first = await claimSession(db, 'student', proof, 'mobile', profile);
+    await resetStudentDevices(db, 'student');
+    await assert.rejects(verifySession(db, { ...phone, 'x-student-session': first.sessionToken }, proof), { code: 'SESSION_REVOKED' });
+    const legacy = { 'x-device-id': phone['x-device-id'], 'x-device-secret': phone['x-device-secret'] };
+    await assert.rejects(verifyLegacyMobileSession(db, 'student', legacy, proof), { code: 'SESSION_REVOKED' });
+    const next = await claimSession(db, 'student', proof, 'mobile', profile);
+    assert.notEqual(first.sessionToken, next.sessionToken);
+    assert.equal((await verifySession(db, { ...phone, 'x-student-session': next.sessionToken }, proof)).uid, 'student');
+    assert.equal((await verifyLegacyMobileSession(db, 'student', legacy, proof)).uid, 'student');
+    await assert.rejects(verifySession(db, { ...phone, 'x-student-session': first.sessionToken }, proof), { code: 'SESSION_REVOKED' });
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_device_reset_grants')).rows[0].n, 0);
+  } finally { db.close(); }
+});
+
+test('replacement phone after reset ignores stale Firestore device IDs and blocks the old phone', async () => {
+  const db = await setup();
+  try {
+    await claimSession(db, 'student', deviceProof(phone), 'mobile', profile);
+    await resetStudentDevices(db, 'student');
+    const replacement = headers('mobile', 'replacement_installation', 'r');
+    const fresh = await claimSession(db, 'student', deviceProof(replacement), 'mobile', profile, { legacyIds: [phone['x-device-id']] });
+    assert.equal((await verifySession(db, { ...replacement, 'x-student-session': fresh.sessionToken }, deviceProof(replacement))).uid, 'student');
+    await assert.rejects(claimSession(db, 'student', deviceProof(phone), 'mobile', profile), { code: 'SESSION_ACTIVE' });
+    await releaseSession(db, await verifySession(db, { ...replacement, 'x-student-session': fresh.sessionToken }, deviceProof(replacement)));
+    await assert.rejects(claimSession(db, 'student', deviceProof(phone), 'mobile', profile), { code: 'DEVICE_MISMATCH' });
+  } finally { db.close(); }
+});
+
+test('two phones racing after full reset cannot both consume the authorization', async () => {
+  const db = await setup();
+  try {
+    await claimSession(db, 'student', deviceProof(phone), 'mobile', profile);
+    await resetStudentDevices(db, 'student');
+    const replacement = headers('mobile', 'replacement_installation', 'r');
+    const results = await Promise.allSettled([
+      claimSession(db, 'student', deviceProof(phone), 'mobile', profile),
+      claimSession(db, 'student', deviceProof(replacement), 'mobile', profile),
+    ]);
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_device_reset_grants')).rows[0].n, 0);
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_device_bindings')).rows[0].n, 1);
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_active_sessions')).rows[0].n, 1);
+  } finally { db.close(); }
+});
+
+test('failed session persistence rolls back the new binding and leaves reset permission usable', async () => {
+  const db = await setup();
+  try {
+    const proof = deviceProof(phone);
+    await claimSession(db, 'student', proof, 'mobile', profile);
+    await resetStudentDevices(db, 'student');
+    await db.execute(`CREATE TRIGGER fail_session BEFORE INSERT ON student_active_sessions
+      BEGIN SELECT RAISE(FAIL, 'simulated storage failure'); END`);
+    await assert.rejects(claimSession(db, 'student', proof, 'mobile', profile));
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_device_bindings')).rows[0].n, 0);
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_device_reset_grants')).rows[0].n, 1);
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_revoked_devices')).rows[0].n, 1);
+    await db.execute('DROP TRIGGER fail_session');
+    await claimSession(db, 'student', proof, 'mobile', profile);
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_device_reset_grants')).rows[0].n, 0);
   } finally { db.close(); }
 });

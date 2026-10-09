@@ -212,19 +212,18 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
   };
 
   const resetDevice = async (student) => {
-    await confirmAction('تصفير أجهزة الطالب؟', 'سيتم السماح للطالب بتسجيل الدخول من أجهزة جديدة حسب الحد المسموح.', async () => {
-      await updateDoc(doc(db, 'students', student.id), {
-        deviceId: null,
-        deviceIds: [],
-        deviceCount: 0,
-        deviceType: null,
-        deviceInfo: null,
-        lastDeviceId: '',
-        lastDeviceLinkedAt: null,
-      });
-      await resetStudentDevice(student.id);
-      await logSupportAction(student, 'تصفير أجهزة الطالب من لوحة الدعم');
-      showToast('تم تصفير الأجهزة');
+    await confirmAction('تصفير أجهزة الطالب؟', 'سيتم إنهاء الجلسة الحالية والسماح بربط جهاز جديد عند تسجيل الدخول التالي.', async () => {
+      try {
+        const result = await resetStudentDevice(student.id, {
+          logAction: () => logSupportAction(student, 'تصفير أجهزة الطالب من لوحة الدعم'),
+        });
+        await Swal.fire({ icon: result.warnings.length ? 'warning' : 'success', title: 'تم تصفير الأجهزة',
+          text: result.warnings.length ? result.warnings.join('\n') : 'يمكن للطالب تسجيل الدخول وربط جهازه الآن.',
+          background: theme.surface, color: theme.text });
+      } catch (error) {
+        await Swal.fire({ icon: 'error', title: 'تعذر تأكيد تصفير الأجهزة', text: error.message,
+          background: theme.surface, color: theme.text });
+      }
     });
   };
 

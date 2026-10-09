@@ -4,7 +4,7 @@ import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { activeCodeGrantsAccess } from './_quiz-domain.js';
-import { deviceProof } from './_device-binding.js';
+import { deviceProof, deviceBindingSchema } from './_device-binding.js';
 import { sessionSchema, verifySession, verifyLegacyMobileSession } from './_student-session.js';
 
 let database;
@@ -37,14 +37,7 @@ export async function getDatabase() {
   if (!schemaPromise) {
     schemaPromise = database.batch([
       ...sessionSchema,
-      `CREATE TABLE IF NOT EXISTS student_device_bindings (
-        student_uid TEXT PRIMARY KEY, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL,
-        linked_at TEXT NOT NULL
-      )`,
-      `CREATE TABLE IF NOT EXISTS student_revoked_devices (
-        student_uid TEXT NOT NULL, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL,
-        PRIMARY KEY (student_uid, device_hash, secret_hash)
-      )`,
+      ...deviceBindingSchema,
       `CREATE TABLE IF NOT EXISTS quizzes (
         id TEXT PRIMARY KEY, lesson_id TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'draft', created_at TEXT NOT NULL, updated_at TEXT NOT NULL

@@ -1,7 +1,22 @@
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
+import { doc, updateDoc } from 'firebase/firestore';
+import { clearedDeviceFields, executeDeviceReset } from './device-reset-workflow';
 
-export async function resetStudentDevice(studentId) {
-  return manageStudentSession(studentId, 'reset');
+const pendingResets = new Map();
+
+export async function resetStudentDevice(studentId, { logAction } = {}) {
+  if (pendingResets.has(studentId)) return pendingResets.get(studentId);
+  const operation = executeDeviceReset({
+    reset: () => manageStudentSession(studentId, 'reset'),
+    syncDisplay: () => updateDoc(doc(db, 'students', studentId), clearedDeviceFields),
+    logAction,
+  });
+  pendingResets.set(studentId, operation);
+  try {
+    return await operation;
+  } finally {
+    pendingResets.delete(studentId);
+  }
 }
 
 export async function endStudentSession(studentId) {
@@ -19,5 +34,5 @@ async function manageStudentSession(studentId, action, extra = {}) {
     body: JSON.stringify({ action, studentId, ...extra }),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'تعذر تصفير الجهاز.');
+  if (!response.ok || data.ok !== true) throw new Error(data.error || 'تعذر تأكيد تنفيذ الإجراء على السيرفر.');
 }

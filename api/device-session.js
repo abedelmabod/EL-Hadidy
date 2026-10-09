@@ -1,6 +1,6 @@
-import { bindDevice, deviceProof, resetDevice, DeviceBindingError } from './_device-binding.js';
+import { deviceProof, DeviceBindingError } from './_device-binding.js';
 import { getDatabase, HttpError, identify, requireDeviceManager } from './_quiz-server.js';
-import { claimSession, clientPlatform, releaseSession, resetSessions, verifySession, verifyLegacyMobileSession } from './_student-session.js';
+import { claimSession, clientPlatform, releaseSession, resetStudentDevices, verifySession, verifyLegacyMobileSession } from './_student-session.js';
 import { deviceSessionMessage, logDeviceSessionRejection } from './_device-session-diagnostics.js';
 
 export default async function handler(req, res) {
@@ -25,8 +25,7 @@ export default async function handler(req, res) {
       }
       const student = await identity.store.collection('students').doc(body.studentId).get();
       if (!student.exists) throw new HttpError(404, 'الطالب غير موجود.');
-      await resetDevice(database, student.data().authUid || student.id);
-      await resetSessions(database, student.data().authUid || student.id);
+      await resetStudentDevices(database, student.data().authUid || student.id);
     } else if (['endSession', 'allowDesktop'].includes(body.action)) {
       await requireDeviceManager(identity);
       if (typeof body.studentId !== 'string' || !body.studentId || body.studentId.length > 128) throw new HttpError(400, 'الطالب مطلوب.');
@@ -49,8 +48,8 @@ export default async function handler(req, res) {
       const legacy = [...new Set([profile.deviceId, ...(Array.isArray(profile.deviceIds) ? profile.deviceIds : [])].filter(Boolean))];
       const proof = deviceProof(req.headers);
       const platform = clientPlatform(req.headers);
-      if (platform === 'mobile') await bindDevice(database, identity.uid, proof, legacy);
-      return res.status(200).json({ ok: true, ...await claimSession(database, identity.uid, proof, platform, { id: results[0].id, ...profile }) });
+      return res.status(200).json({ ok: true, ...await claimSession(database, identity.uid, proof, platform,
+        { id: results[0].id, ...profile }, { legacyIds: legacy }) });
     } else if (['verify', 'logout'].includes(body.action)) {
       const session = await verifyLegacyMobileSession(database, identity.uid, req.headers, deviceProof(req.headers), {
         allowExpired: body.action === 'logout',
