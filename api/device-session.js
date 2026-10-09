@@ -1,13 +1,16 @@
 import { bindDevice, deviceProof, resetDevice, DeviceBindingError } from './_device-binding.js';
 import { getDatabase, HttpError, identify, requireDeviceManager } from './_quiz-server.js';
 import { claimSession, clientPlatform, releaseSession, resetSessions, verifySession } from './_student-session.js';
+import { deviceSessionMessage, logDeviceSessionRejection } from './_device-session-diagnostics.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
+  let action;
   try {
     const database = await getDatabase();
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+    action = body.action;
     if (['verify', 'logout'].includes(body.action) && req.headers['x-student-session']) {
       const session = await verifySession(database, req.headers, deviceProof(req.headers), { allowExpired: body.action === 'logout' });
       if (body.action === 'logout') await releaseSession(database, session);
@@ -53,15 +56,19 @@ export default async function handler(req, res) {
     } else { throw new HttpError(400, 'طلب غير صالح.'); }
     return res.status(200).json({ ok: true });
   } catch (error) {
-    if (error instanceof DeviceBindingError) return res.status(error.status).json({
-      code: error.code, error: error.code === 'SESSION_ACTIVE'
-        ? 'سجّل الخروج من الهاتف أو الكمبيوتر أولًا قبل استخدام الجهاز الآخر. لو الجلسة عالقة تواصل مع الدعم الفني.'
-        : error.code === 'DESKTOP_NOT_APPROVED' ? 'نسخة الكمبيوتر تحتاج موافقة الدكتور أو الدعم الفني أولًا.'
-          : 'انتهت جلسة الجهاز أو الحساب مرتبط بجهاز آخر. سجّل الدخول أو تواصل مع الدكتور.',
-    });
-    if (error instanceof HttpError) return res.status(error.status).json({ error: error.message });
-    if (error instanceof SyntaxError) return res.status(400).json({ error: 'طلب غير صالح.' });
-    console.error('Device session failure', error.name);
+    if (error instanceof DeviceBindingError) {
+      logDeviceSessionRejection(req, action, error.code, error.status);
+      return res.status(error.status).json({ code: error.code, error: deviceSessionMessage(error.code) });
+    }
+    if (error instanceof HttpError) {
+      logDeviceSessionRejection(req, action, 'HTTP_REJECTED', error.status);
+      return res.status(error.status).json({ error: error.message });
+    }
+    if (error instanceof SyntaxError) {
+      logDeviceSessionRejection(req, action, 'INVALID_REQUEST', 400);
+      return res.status(400).json({ error: 'طلب غير صالح.' });
+    }
+    logDeviceSessionRejection(req, action, 'SERVER_UNAVAILABLE', 503);
     return res.status(503).json({ error: 'تعذر التحقق من الجهاز. حاول مرة أخرى.' });
   }
 }
