@@ -5,6 +5,8 @@ const digest = (value) => createHash('sha256').update(value).digest('hex');
 const matches = (a, b) => typeof a === 'string' && typeof b === 'string'
   && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 export const sessionSchema = [
+  `CREATE TABLE IF NOT EXISTS student_access_blocks (student_uid TEXT PRIMARY KEY, blocked INTEGER NOT NULL, operation_id TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS student_login_attempts (bucket TEXT PRIMARY KEY, started_at INTEGER NOT NULL, attempts INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS student_desktop_permissions (student_uid TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0)`,
   `CREATE TABLE IF NOT EXISTS student_desktop_bindings (
     student_uid TEXT PRIMARY KEY, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL, linked_at TEXT NOT NULL)`,
@@ -38,6 +40,8 @@ export async function claimSession(db, uid, proof, platform, profile, { legacyId
   const token = randomBytes(32).toString('base64url');
   const tx = await db.transaction('write');
   try {
+    const blocked = (await tx.execute({ sql: 'SELECT blocked FROM student_access_blocks WHERE student_uid = ?', args: [uid] })).rows[0];
+    if (blocked?.blocked) throw new DeviceBindingError('ACCOUNT_BANNED', 403);
     const existing = (await tx.execute({ sql: 'SELECT * FROM student_active_sessions WHERE student_uid = ?', args: [uid] })).rows[0];
     if (existing && (existing.platform !== platform || !matches(existing.device_hash, proof.idHash)
       || !matches(existing.secret_hash, proof.secretHash))) throw new DeviceBindingError('SESSION_ACTIVE', 409);
@@ -71,7 +75,8 @@ export async function claimSession(db, uid, proof, platform, profile, { legacyId
 export async function verifySession(db, headers, proof, { allowExpired = false } = {}) {
   const token = headers['x-student-session'];
   if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new DeviceBindingError('SESSION_REQUIRED', 401);
-  const row = (await db.execute({ sql: 'SELECT * FROM student_active_sessions WHERE token_hash = ?', args: [digest(token)] })).rows[0];
+  const row = (await db.execute({ sql: `SELECT s.* FROM student_active_sessions s WHERE token_hash = ?
+    AND NOT EXISTS (SELECT 1 FROM student_access_blocks b WHERE b.student_uid = s.student_uid AND b.blocked = 1)`, args: [digest(token)] })).rows[0];
   if (!row || row.platform !== clientPlatform(headers) || !matches(row.device_hash, proof.idHash)
     || !matches(row.secret_hash, proof.secretHash)) throw new DeviceBindingError('SESSION_REVOKED', 401);
   if (!allowExpired && Date.now() - Date.parse(row.created_at) > 7 * 24 * 60 * 60 * 1000) throw new DeviceBindingError('SESSION_EXPIRED', 401);
@@ -88,6 +93,7 @@ export async function verifyLegacyMobileSession(db, uid, headers, proof, { allow
     JOIN student_device_bindings b ON b.student_uid = s.student_uid
       AND b.device_hash = s.device_hash AND b.secret_hash = s.secret_hash
     WHERE s.student_uid = ? AND s.platform = 'mobile'
+      AND NOT EXISTS (SELECT 1 FROM student_access_blocks a WHERE a.student_uid = s.student_uid AND a.blocked = 1)
       AND NOT EXISTS (SELECT 1 FROM student_revoked_devices r WHERE r.student_uid = s.student_uid
         AND r.device_hash = s.device_hash AND r.secret_hash = s.secret_hash)`, args: [uid] })).rows[0];
   if (!row || !matches(row.device_hash, proof.idHash) || !matches(row.secret_hash, proof.secretHash)) {

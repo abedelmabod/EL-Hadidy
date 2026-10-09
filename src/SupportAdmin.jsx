@@ -12,7 +12,7 @@ import {
 import Swal from 'sweetalert2';
 import { db } from './firebase';
 import ThemeToggle from './ThemeToggle';
-import { resetStudentDevice, endStudentSession, allowStudentDesktop } from './services/device-session';
+import { resetStudentDevice, endStudentSession, allowStudentDesktop, setStudentBan } from './services/device-session';
 import { changeStudentPassword } from './services/student-password';
 import { useDeviceStatuses, deviceCountLabel, deviceTypeLabel } from './hooks/useDeviceStatuses';
 
@@ -235,13 +235,16 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
       willBan ? 'حظر الطالب؟' : 'إلغاء حظر الطالب؟',
       willBan ? 'لن يستطيع الطالب استخدام المنصة حتى يتم إلغاء الحظر.' : 'سيتم السماح للطالب باستخدام المنصة مرة أخرى.',
       async () => {
-        await updateDoc(doc(db, 'students', student.id), {
-          isBanned: willBan,
-          banReason: willBan ? 'حظر يدوي من الدعم الفني' : '',
-        });
-        if (willBan) await endStudentSession(student.id);
-        await logSupportAction(student, willBan ? 'حظر الطالب من لوحة الدعم' : 'إلغاء حظر الطالب من لوحة الدعم');
-        showToast(willBan ? 'تم حظر الطالب' : 'تم إلغاء الحظر');
+        try {
+          const result = await setStudentBan(student.id, willBan);
+          try { await logSupportAction(student, willBan ? 'طلب حظر الطالب من لوحة الدعم' : 'طلب إلغاء حظر الطالب من لوحة الدعم', { accessBlocked: result.accessBlocked }); }
+          catch { result.warnings.push('تعذر تسجيل الإجراء في سجل الدعم.'); }
+          await Swal.fire({ icon: result.warnings.length ? 'warning' : 'success',
+            title: result.warnings.length ? 'راجع نتيجة الإجراء' : (willBan ? 'تم حظر الطالب' : 'تم إلغاء الحظر'),
+            text: result.warnings.join('\n'), background: theme.surface, color: theme.text });
+        } catch (error) {
+          await Swal.fire({ icon: 'error', title: 'تعذر تأكيد الإجراء', text: error.message, background: theme.surface, color: theme.text });
+        }
       },
       willBan
     );

@@ -3,6 +3,7 @@ import { getDatabase, HttpError, identify, requireDeviceManager } from './_quiz-
 import { claimSession, clientPlatform, releaseSession, resetStudentDevices, verifySession, verifyLegacyMobileSession } from './_student-session.js';
 import { deviceSessionMessage, logDeviceSessionRejection } from './_device-session-diagnostics.js';
 import { readDeviceStatuses } from './_device-status.js';
+import { setDesktopPermission, setStudentBan } from './_student-access.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -34,15 +35,20 @@ export default async function handler(req, res) {
       const student = await identity.store.collection('students').doc(body.studentId).get();
       if (!student.exists) throw new HttpError(404, 'الطالب غير موجود.');
       await resetStudentDevices(database, student.data().authUid || student.id);
-    } else if (['endSession', 'allowDesktop'].includes(body.action)) {
+    } else if (['endSession', 'allowDesktop', 'setBan'].includes(body.action)) {
       await requireDeviceManager(identity);
       if (typeof body.studentId !== 'string' || !body.studentId || body.studentId.length > 128) throw new HttpError(400, 'الطالب مطلوب.');
       const student = await identity.store.collection('students').doc(body.studentId).get();
       if (!student.exists) throw new HttpError(404, 'الطالب غير موجود.');
       const uid = student.data().authUid || student.id;
+      if (body.action === 'setBan') {
+        if (typeof body.banned !== 'boolean') throw new HttpError(400, 'إعداد غير صالح.');
+        return res.status(200).json(await setStudentBan(database, student.ref, uid, body.banned));
+      }
       if (body.action === 'allowDesktop') {
         if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'إعداد غير صالح.');
-        await database.execute({ sql: 'INSERT INTO student_desktop_permissions VALUES (?, ?) ON CONFLICT(student_uid) DO UPDATE SET enabled = excluded.enabled', args: [uid, body.enabled ? 1 : 0] });
+        await setDesktopPermission(database, uid, body.enabled);
+        return res.status(200).json({ ok: true });
       }
       await database.execute({ sql: 'DELETE FROM student_active_sessions WHERE student_uid = ?', args: [uid] });
     } else if (body.action === 'bind') {

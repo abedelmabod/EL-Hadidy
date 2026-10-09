@@ -6,7 +6,7 @@ import ThemeToggle from './ThemeToggle';
 import QuizAdmin from './QuizAdmin';
 import StudyPlanAdmin from './StudyPlanAdmin';
 import { keepEnglishDigitsOnly } from './services/auth-service';
-import { resetStudentDevice, endStudentSession } from './services/device-session';
+import { resetStudentDevice, endStudentSession, setStudentBan } from './services/device-session';
 import { useDeviceStatuses, deviceCountLabel, deviceTypeLabel } from './hooks/useDeviceStatuses';
 
 const AdminDashboard = ({ 
@@ -870,8 +870,10 @@ const AdminDashboard = ({
   };
   const toggleStudentBan = async (student) => {
     try {
-      await updateDoc(doc(db, 'students', student.id), { isBanned: !student.isBanned, banReason: !student.isBanned ? 'تم حظر الحساب بواسطة الإدارة' : '' });
-      if (!student.isBanned) await endStudentSession(student.id);
+      const result = await setStudentBan(student.id, !student.isBanned);
+      await Swal.fire({ icon: result.warnings.length ? 'warning' : 'success',
+        title: result.warnings.length ? 'راجع نتيجة الإجراء' : (!student.isBanned ? 'تم حظر الطالب' : 'تم فك الحظر'),
+        text: result.warnings.join('\n'), background: theme.surface, color: theme.text });
     } catch { await Swal.fire({ icon: 'warning', title: 'راجع حالة الطالب', text: 'تعذر إكمال تحديث حالة الحساب والجلسة. أعد المحاولة من الدعم.' }); }
   };
 

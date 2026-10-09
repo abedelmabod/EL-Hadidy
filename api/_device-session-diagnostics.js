@@ -1,4 +1,5 @@
 const messages = {
+  ACCOUNT_BANNED: 'الحساب محظور أو الوصول موقوف. تواصل مع الدعم الفني.',
   PLATFORM_REQUIRED: 'تعذر تحديد نوع التطبيق. بيانات المنصة المطلوبة لم تصل إلى السيرفر. تواصل مع الدعم الفني.',
   DEVICE_PROOF_REQUIRED: 'بيانات التحقق من الجهاز ناقصة أو غير صالحة. تواصل مع الدعم الفني.',
   DEVICE_MISMATCH: 'بيانات الجهاز لا تطابق الجهاز المرتبط بالحساب أو تم إلغاء ربط هذا الجهاز. تواصل مع الدعم الفني.',
@@ -20,7 +21,7 @@ export function logDeviceSessionRejection(req, action, code, status, warn = cons
     code: Object.hasOwn(messages, code) || ['HTTP_REJECTED', 'INVALID_REQUEST', 'SERVER_UNAVAILABLE'].includes(code)
       ? code : 'UNKNOWN_REJECTION',
     status: Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500,
-    action: ['bind', 'verify', 'logout', 'reset', 'endSession', 'allowDesktop'].includes(action) ? action : 'unknown',
+    action: ['bind', 'verify', 'logout', 'reset', 'endSession', 'allowDesktop', 'setBan', 'statuses'].includes(action) ? action : 'unknown',
     platform: ['mobile', 'windows'].includes(platform) ? platform : platform == null ? 'missing' : 'invalid',
   }));
 }

@@ -31,6 +31,10 @@ export async function resetStudentDevice(studentId, { logAction } = {}) {
 export async function endStudentSession(studentId) {
   return manageStudentSession(studentId, 'endSession');
 }
+
+export async function setStudentBan(studentId, banned) {
+  return manageStudentSession(studentId, 'setBan', { banned });
+}
 export async function allowStudentDesktop(studentId, enabled) {
   return manageStudentSession(studentId, 'allowDesktop', { enabled });
 }
