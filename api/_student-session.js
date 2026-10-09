@@ -17,6 +17,12 @@ export const sessionSchema = [
 
 export function clientPlatform(headers) {
   const value = headers['x-client-platform'];
+  // Older phone builds omit the platform header; their installation IDs carry it.
+  // This is routing metadata only: device secrets and session checks remain mandatory.
+  if (value === undefined && typeof headers['x-device-id'] === 'string'
+    && /^(android|ios)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(headers['x-device-id'])) {
+    return 'mobile';
+  }
   if (!['mobile', 'windows'].includes(value)) throw new DeviceBindingError('PLATFORM_REQUIRED', 400);
   return value;
 }
