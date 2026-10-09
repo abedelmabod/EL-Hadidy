@@ -19,12 +19,13 @@ const legacyPhone = {
   'x-device-id': 'android_12345678-1234-1234-1234-123456789abc',
   'x-device-secret': 'c'.repeat(64),
 };
-test('only missing platform on recognized phone installations gets legacy compatibility', () => {
+test('missing platform supports legacy mobile IDs while explicit invalid platforms are rejected', () => {
   assert.equal(clientPlatform(legacyPhone), 'mobile');
   assert.equal(clientPlatform({ ...legacyPhone, 'x-device-id': legacyPhone['x-device-id'].replace('android_', 'ios_') }), 'mobile');
   assert.equal(clientPlatform(pc), 'windows');
-  for (const invalid of [ {}, { 'x-device-id': 'desktop_installation' },
-    { 'x-device-id': 'android_not-a-uuid' }, { ...legacyPhone, 'x-client-platform': '' },
+  assert.equal(clientPlatform({}), 'mobile');
+  assert.equal(clientPlatform({ 'x-device-id': 'persisted_installation_123' }), 'mobile');
+  for (const invalid of [ { ...legacyPhone, 'x-client-platform': null }, { ...legacyPhone, 'x-client-platform': '' },
     { ...legacyPhone, 'x-client-platform': 'invalid' } ]) {
     assert.throws(() => clientPlatform(invalid), { code: 'PLATFORM_REQUIRED' });
   }
@@ -44,6 +45,29 @@ test('legacy phone still needs its secret and lease, and cannot displace Windows
     await releaseSession(db, await verifySession(db, signed, proof));
     await claimSession(db, 'student', deviceProof(pc), 'windows', profile);
     await assert.rejects(claimSession(db, 'student', proof, clientPlatform(legacyPhone), profile), { code: 'SESSION_ACTIVE' });
+  } finally { db.close(); }
+});
+
+test('legacy non-UUID installation retains all binding and session checks', async () => {
+  const db = await setup();
+  try {
+    await db.execute(`CREATE TABLE student_device_bindings (
+      student_uid TEXT PRIMARY KEY, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL, linked_at TEXT NOT NULL)`);
+    const { bindDevice, resetDevice } = await import('../api/_device-binding.js');
+    const legacy = { 'x-device-id': 'persisted_installation_123', 'x-device-secret': 'e'.repeat(64) };
+    const proof = deviceProof(legacy);
+    assert.throws(() => deviceProof({}), { code: 'DEVICE_PROOF_REQUIRED' });
+    await bindDevice(db, 'student', proof);
+    await assert.rejects(bindDevice(db, 'student', deviceProof(phone)), { code: 'DEVICE_MISMATCH' });
+    const result = await claimSession(db, 'student', proof, clientPlatform(legacy), profile);
+    const signed = { ...legacy, 'x-student-session': result.sessionToken };
+    assert.equal((await verifySession(db, signed, proof)).uid, 'student');
+    await assert.rejects(verifySession(db, { ...signed, 'x-client-platform': 'windows' }, proof), { code: 'SESSION_REVOKED' });
+    await assert.rejects(claimSession(db, 'student', deviceProof(pc), 'windows', profile), { code: 'SESSION_ACTIVE' });
+    await resetDevice(db, 'student');
+    await resetSessions(db, 'student');
+    await assert.rejects(bindDevice(db, 'student', proof), { code: 'DEVICE_MISMATCH' });
+    await assert.rejects(verifySession(db, signed, proof), { code: 'SESSION_REVOKED' });
   } finally { db.close(); }
 });
 test('Windows requires administrator approval', async () => {
