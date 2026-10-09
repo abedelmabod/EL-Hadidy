@@ -7,9 +7,10 @@ import QuizAdmin from './QuizAdmin';
 import StudyPlanAdmin from './StudyPlanAdmin';
 import { keepEnglishDigitsOnly } from './services/auth-service';
 import { resetStudentDevice, endStudentSession } from './services/device-session';
+import { useDeviceStatuses, deviceCountLabel, deviceTypeLabel } from './hooks/useDeviceStatuses';
 
 const AdminDashboard = ({ 
-  activeTab, setActiveTab, studentsDB = [], lessons = [], codesDB = [], logsDB = [], supportRequests = [],
+  activeTab, setActiveTab, studentsDB: rawStudentsDB = [], lessons = [], codesDB = [], logsDB = [], supportRequests = [],
   user, setUser, setLessons, newLesson, setNewLesson, subjects = [], theme, themeMode, toggleTheme
 }) => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -62,6 +63,7 @@ const AdminDashboard = ({
   const [draggingLessonId, setDraggingLessonId] = useState(null);
   const [dragOverLessonId, setDragOverLessonId] = useState(null);
   const [selectedStudentId, setSelectedStudentId] = useState(null);
+  const studentsDB = useDeviceStatuses(rawStudentsDB, activeTab === 'students' || !!selectedStudentId);
   const [showResolvedSupportRequests, setShowResolvedSupportRequests] = useState(false);
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
   const [aiInput, setAiInput] = useState("");
@@ -154,6 +156,7 @@ const AdminDashboard = ({
     switch (type?.toLowerCase()) {
       case 'windows': return <i className="fab fa-windows" style={{color: theme.info, fontSize:'16px'}} title="Windows"></i>;
       case 'android': return <i className="fab fa-android" style={{color: theme.success, fontSize:'16px'}} title="Android"></i>;
+      case 'mobile': return <i className="fas fa-mobile-alt" style={{color: theme.info, fontSize:'16px'}} title="هاتف"></i>;
       case 'ios':
       case 'macos': return <i className="fab fa-apple" style={{color: theme.text, fontSize:'16px'}} title="Apple"></i>;
       default: return <i className="fas fa-laptop" style={{color: theme.muted, fontSize:'16px'}} title="Unknown"></i>;
@@ -994,12 +997,6 @@ const AdminDashboard = ({
     xhr.send(file);
   });
 
-  const getStudentDeviceIds = (student = {}) => {
-    const ids = Array.isArray(student.deviceIds) ? student.deviceIds : [];
-    const legacyId = student.deviceId ? [student.deviceId] : [];
-    return Array.from(new Set([...ids, ...legacyId].map((id) => String(id || "").trim()).filter(Boolean)));
-  };
-
   const getStudentMaxDevices = (student = {}) => {
     const parsed = Number(student.maxDevices ?? student.deviceLimit ?? 1);
     if (!Number.isFinite(parsed)) return 1;
@@ -1050,7 +1047,7 @@ const AdminDashboard = ({
 
   const updateStudentDeviceLimit = async (student) => {
     const currentLimit = getStudentMaxDevices(student);
-    const currentCount = getStudentDeviceIds(student).length;
+    const currentCount = student.deviceStatus?.mobileBound ? 1 : 0;
     const result = await Swal.fire({
       title: 'عدد الأجهزة المسموح بها',
       html: `<div style="direction:rtl;text-align:right;line-height:1.9">الحساب مسجل حالياً على <b>${currentCount}</b> جهاز.<br/>اختر عدد الأجهزة المسموح لها بالدخول لهذا الطالب.</div>`,
@@ -1825,7 +1822,7 @@ const AdminDashboard = ({
     return matchesYear && matchesStatus;
   }) || [];
   const selectedVisibleCodesCount = visibleCodes.filter((code) => selectedCodeIds.includes(code.id)).length;
-  const deviceFilters = ["all", ...new Set(studentsDB.map((student) => student.deviceType).filter(Boolean))];
+  const deviceFilters = ["all", ...new Set(studentsDB.filter((student) => student.deviceStatus).map(deviceTypeLabel))];
   const visibleStudents = studentsDB?.filter((student) => {
     const term = searchTerm.trim().toLowerCase();
     const matchesSearch = !term || student.name?.toLowerCase().includes(term) || student.username?.toLowerCase().includes(term) || student.phone?.includes(searchTerm.trim());
@@ -1841,7 +1838,7 @@ const AdminDashboard = ({
       (studentStatusFilter === "subscribed" && student.isSubscribed && !student.isBanned) ||
       (studentStatusFilter === "unsubscribed" && !student.isSubscribed && !student.isBanned) ||
       (studentStatusFilter === "banned" && student.isBanned);
-    const matchesDevice = studentDeviceFilter === "all" || student.deviceType === studentDeviceFilter;
+    const matchesDevice = studentDeviceFilter === "all" || (student.deviceStatus && deviceTypeLabel(student) === studentDeviceFilter);
     return matchesSearch && matchesYear && matchesStatus && matchesDevice;
   }) || [];
   const visibleLogs = logsDB?.filter((log) => {
@@ -3083,7 +3080,7 @@ const AdminDashboard = ({
                 { label: 'الرقم', value: (s) => s.phone || 'غير متوفر' },
                 { label: 'المرحلة', value: (s) => s.year || s.codeYear || '' },
                 { label: 'الاشتراك', value: (s) => s.isSubscribed ? 'مفعل' : 'غير مفعل' },
-                { label: 'الأجهزة', value: (s) => `${getStudentDeviceIds(s).length}/${getStudentMaxDevices(s)}` },
+                { label: 'الأجهزة', value: deviceCountLabel },
                 { label: 'تصوير الشاشة', value: (s) => isStudentScreenshotAllowed(s) ? 'مسموح' : 'ممنوع' },
                 { label: 'الحالة', value: (s) => s.isBanned ? 'محظور' : 'مفعل' },
                 { label: 'الكود المستخدم', value: (s) => s.usedCode || '' },
@@ -3105,10 +3102,10 @@ const AdminDashboard = ({
                       <td>{s.phone || 'غير متوفر'}</td>
                       <td>
                         <div style={{ fontSize: '18px' }}>
-                          {getDeviceIcon(s.deviceType)} 
-                          <div style={{fontSize: '9px', color: theme.muted, marginTop: '4px'}}>{s.deviceType || 'غير متوفر'}</div>
+                          {getDeviceIcon(s.deviceStatus?.mobileBound ? 'mobile' : s.deviceStatus?.desktopBound ? 'windows' : '')}
+                          <div style={{fontSize: '9px', color: theme.muted, marginTop: '4px'}}>{deviceTypeLabel(s)}</div>
                           <div style={{fontSize: '10px', color: theme.accent, marginTop: '3px', fontWeight: 900}}>
-                            {getStudentDeviceIds(s).length}/{getStudentMaxDevices(s)}
+                            {deviceCountLabel(s)}
                           </div>
                         </div>
                       </td>
@@ -3328,7 +3325,7 @@ const AdminDashboard = ({
               <div><strong>{selectedStudentProfile.year || 'غير محدد'}</strong><span>مرحلة التسجيل</span></div>
               <div><strong>{selectedStudentProfile.codeYear || selectedStudentProfile.accessYear || 'غير مفعل'}</strong><span>مرحلة الوصول</span></div>
                 <div><strong>{selectedStudentProfile.isSubscribed ? 'مفعل' : 'غير مفعل'}</strong><span>الاشتراك</span></div>
-                <div><strong>{getStudentDeviceIds(selectedStudentProfile).length}/{getStudentMaxDevices(selectedStudentProfile)}</strong><span>الأجهزة</span></div>
+                <div><strong>{deviceCountLabel(selectedStudentProfile)}</strong><span>الهاتف المسجل</span></div>
                 <div><strong>{isStudentScreenshotAllowed(selectedStudentProfile) ? 'مسموح' : 'ممنوع'}</strong><span>تصوير الشاشة</span></div>
               </div>
 
@@ -3345,9 +3342,9 @@ const AdminDashboard = ({
                 <section>
                   <div className="profile-section-title"><i className="fas fa-mobile-alt"></i> الجهاز</div>
                   <div className="profile-info-list">
-                    <span><strong>النوع:</strong> {selectedStudentProfile.deviceType || 'غير معروف'}</span>
-                    <span><strong>Device ID:</strong> {selectedStudentProfile.deviceId ? 'مسجل' : 'غير مسجل'}</span>
-                    <span><strong>الأجهزة المسجلة:</strong> {getStudentDeviceIds(selectedStudentProfile).length} من {getStudentMaxDevices(selectedStudentProfile)}</span>
+                    <span><strong>النوع:</strong> {deviceTypeLabel(selectedStudentProfile)}</span>
+                    <span><strong>الهاتف المسجل:</strong> {deviceCountLabel(selectedStudentProfile)}</span>
+                    <span><strong>الجلسة:</strong> {selectedStudentProfile.deviceStatus ? (selectedStudentProfile.deviceStatus.sessionPlatform === 'mobile' ? 'هاتف' : selectedStudentProfile.deviceStatus.sessionPlatform === 'windows' ? 'Windows' : 'لا توجد جلسة') : selectedStudentProfile.deviceStatusLabel}</span>
                     <span><strong>محاضرات متاحة:</strong> {selectedStudentLessons.length}</span>
                     <span><strong>ملاحظات:</strong> {selectedStudentProfile.banReason || selectedStudentProfile.deviceInfo || 'لا توجد'}</span>
                   </div>

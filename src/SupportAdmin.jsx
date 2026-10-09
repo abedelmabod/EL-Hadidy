@@ -14,6 +14,7 @@ import { db } from './firebase';
 import ThemeToggle from './ThemeToggle';
 import { resetStudentDevice, endStudentSession, allowStudentDesktop } from './services/device-session';
 import { changeStudentPassword } from './services/student-password';
+import { useDeviceStatuses, deviceCountLabel, deviceTypeLabel } from './hooks/useDeviceStatuses';
 
 const YEAR_TABS = [
   'الكل',
@@ -36,8 +37,8 @@ const STATUS_FILTERS = [
 
 const DEVICE_FILTERS = [
   { id: 'all', label: 'كل الأجهزة' },
-  { id: 'registered', label: 'جهاز مسجل' },
-  { id: 'unregistered', label: 'بدون جهاز' },
+  { id: 'registered', label: 'هاتف مسجل' },
+  { id: 'unregistered', label: 'بدون هاتف' },
 ];
 
 const ISSUE_TYPES = ['متابعة عامة', 'مشكلة كود', 'تصفير جهاز', 'مشكلة فيديو', 'كلمة المرور', 'اشتراك'];
@@ -45,7 +46,8 @@ const PRIORITIES = ['عادية', 'متوسطة', 'عاجلة'];
 const CASE_STATUSES = ['جديد', 'قيد المتابعة', 'تم الحل'];
 
 function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests = [] }) {
-  const [students, setStudents] = useState([]);
+  const [rawStudents, setStudents] = useState([]);
+  const students = useDeviceStatuses(rawStudents);
   const [logs, setLogs] = useState([]);
   const [search, setSearch] = useState('');
   const [activeYear, setActiveYear] = useState('الكل');
@@ -98,7 +100,7 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
     setIssueType(selectedStudent.supportIssueType || ISSUE_TYPES[0]);
     setPriority(selectedStudent.supportPriority || PRIORITIES[0]);
     setCaseStatus(selectedStudent.supportStatus || CASE_STATUSES[0]);
-  }, [selectedStudent]);
+  }, [selectedStudent?.id, selectedStudent?.supportNote, selectedStudent?.supportIssueType, selectedStudent?.supportPriority, selectedStudent?.supportStatus]);
 
   const filteredStudents = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -124,8 +126,8 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
         (statusFilter === 'unsubscribed' && !student.isSubscribed);
       const matchesDevice =
         deviceFilter === 'all' ||
-        (deviceFilter === 'registered' && student.deviceId) ||
-        (deviceFilter === 'unregistered' && !student.deviceId);
+        (deviceFilter === 'registered' && student.deviceStatus?.mobileBound === true) ||
+        (deviceFilter === 'unregistered' && student.deviceStatus?.mobileBound === false);
 
       return matchesSearch && matchesYear && matchesStatus && matchesDevice;
     });
@@ -155,7 +157,7 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
       { label: 'إجمالي الطلاب', value: students.length, icon: 'fa-users', color: theme.accent },
       { label: 'نشط', value: students.filter((student) => !student.isBanned).length, icon: 'fa-user-check', color: theme.success },
       { label: 'محظور', value: students.filter((student) => student.isBanned).length, icon: 'fa-user-slash', color: theme.danger },
-      { label: 'بدون جهاز', value: students.filter((student) => !student.deviceId).length, icon: 'fa-mobile-screen', color: theme.info },
+      { label: 'بدون هاتف', value: students.filter((student) => student.deviceStatus?.mobileBound === false).length, icon: 'fa-mobile-screen', color: theme.info },
       { label: 'طلبات معلقة', value: pendingSupportRequests.length, icon: 'fa-headset', color: theme.accent },
     ],
     [pendingSupportRequests.length, students, theme]
@@ -580,7 +582,7 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
                       @{student.username || 'بدون اسم مستخدم'} • {student.year || 'بدون مرحلة'}
                       </div>
                       <div style={{ color: theme.subText, fontSize: '12px', marginTop: '4px' }}>
-                        {student.phone || 'لا يوجد رقم هاتف'} • {student.deviceId ? 'جهاز مسجل' : 'بدون جهاز'}
+                        {student.phone || 'لا يوجد رقم هاتف'} • {deviceTypeLabel(student)}
                       </div>
                     </div>
                   </div>
@@ -635,8 +637,8 @@ function SupportAdmin({ setUser, theme, themeMode, toggleTheme, supportRequests 
                     ['الهاتف', selectedStudent.phone || 'غير مسجل'],
                     ['الاشتراك', selectedStudent.isSubscribed ? 'مشترك' : 'غير مشترك'],
                     ['الكود', selectedStudent.usedCode || 'لا يوجد'],
-                    ['الجهاز', selectedStudent.deviceType || 'غير مسجل'],
-                    ['عدد الأجهزة', `${(Array.isArray(selectedStudent.deviceIds) ? selectedStudent.deviceIds.length : (selectedStudent.deviceId ? 1 : 0))}/${selectedStudent.maxDevices || 1}`],
+                    ['الجهاز', deviceTypeLabel(selectedStudent)],
+                    ['الهاتف المسجل', deviceCountLabel(selectedStudent)],
                     ['الحالة', selectedStudent.isBanned ? 'محظور' : 'نشط'],
                     ['آخر تحديث دعم', formatDate(selectedStudent.supportUpdatedAt)],
                   ].map(([label, value]) => (

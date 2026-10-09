@@ -2,6 +2,7 @@ import { deviceProof, DeviceBindingError } from './_device-binding.js';
 import { getDatabase, HttpError, identify, requireDeviceManager } from './_quiz-server.js';
 import { claimSession, clientPlatform, releaseSession, resetStudentDevices, verifySession, verifyLegacyMobileSession } from './_student-session.js';
 import { deviceSessionMessage, logDeviceSessionRejection } from './_device-session-diagnostics.js';
+import { readDeviceStatuses } from './_device-status.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -18,7 +19,14 @@ export default async function handler(req, res) {
     }
     // Session claims and administrative actions always require a Firebase identity.
     const identity = await identify({ ...req, headers: { ...req.headers, 'x-student-session': undefined } });
-    if (body.action === 'reset') {
+    if (body.action === 'statuses') {
+      await requireDeviceManager(identity);
+      if (!Array.isArray(body.studentUids) || !body.studentUids.length || body.studentUids.length > 200
+        || body.studentUids.some((uid) => typeof uid !== 'string' || !uid || uid.length > 128)) {
+        throw new HttpError(400, 'قائمة الطلاب غير صالحة.');
+      }
+      return res.status(200).json({ ok: true, statuses: await readDeviceStatuses(database, [...new Set(body.studentUids)]) });
+    } else if (body.action === 'reset') {
       await requireDeviceManager(identity);
       if (typeof body.studentId !== 'string' || !body.studentId || body.studentId.length > 128) {
         throw new HttpError(400, 'الطالب مطلوب.');

@@ -4,6 +4,15 @@ import { clearedDeviceFields, executeDeviceReset } from './device-reset-workflow
 
 const pendingResets = new Map();
 
+export async function getStudentDeviceStatuses(studentUids) {
+  const { statuses } = await manageStudentSession(undefined, 'statuses', { studentUids });
+  if (!statuses || studentUids.some((uid) => typeof statuses[uid]?.mobileBound !== 'boolean'
+    || typeof statuses[uid]?.desktopBound !== 'boolean')) {
+    throw new Error('تعذر قراءة حالة الأجهزة من السيرفر.');
+  }
+  return statuses;
+}
+
 export async function resetStudentDevice(studentId, { logAction } = {}) {
   if (pendingResets.has(studentId)) return pendingResets.get(studentId);
   const operation = executeDeviceReset({
@@ -35,4 +44,6 @@ async function manageStudentSession(studentId, action, extra = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok !== true) throw new Error(data.error || 'تعذر تأكيد تنفيذ الإجراء على السيرفر.');
+  if (action !== 'statuses' && typeof window !== 'undefined') window.dispatchEvent(new Event('student-device-status-changed'));
+  return data;
 }
