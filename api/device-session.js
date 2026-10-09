@@ -1,6 +1,6 @@
 import { bindDevice, deviceProof, resetDevice, DeviceBindingError } from './_device-binding.js';
 import { getDatabase, HttpError, identify, requireDeviceManager } from './_quiz-server.js';
-import { claimSession, clientPlatform, releaseSession, resetSessions, verifySession } from './_student-session.js';
+import { claimSession, clientPlatform, releaseSession, resetSessions, verifySession, verifyLegacyMobileSession } from './_student-session.js';
 import { deviceSessionMessage, logDeviceSessionRejection } from './_device-session-diagnostics.js';
 
 export default async function handler(req, res) {
@@ -51,8 +51,11 @@ export default async function handler(req, res) {
       const platform = clientPlatform(req.headers);
       if (platform === 'mobile') await bindDevice(database, identity.uid, proof, legacy);
       return res.status(200).json({ ok: true, ...await claimSession(database, identity.uid, proof, platform, { id: results[0].id, ...profile }) });
-    } else if (body.action === 'verify') {
-      throw new DeviceBindingError('SESSION_REQUIRED', 401);
+    } else if (['verify', 'logout'].includes(body.action)) {
+      const session = await verifyLegacyMobileSession(database, identity.uid, req.headers, deviceProof(req.headers), {
+        allowExpired: body.action === 'logout',
+      });
+      if (body.action === 'logout') await releaseSession(database, session);
     } else { throw new HttpError(400, 'طلب غير صالح.'); }
     return res.status(200).json({ ok: true });
   } catch (error) {

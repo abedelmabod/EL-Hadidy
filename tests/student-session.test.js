@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClient } from '@libsql/client';
 import { deviceProof } from '../api/_device-binding.js';
-import { claimSession, sessionSchema, verifySession, releaseSession, publicProfile, resetSessions, clientPlatform } from '../api/_student-session.js';
+import { claimSession, sessionSchema, verifySession, releaseSession, publicProfile, resetSessions, clientPlatform, verifyLegacyMobileSession } from '../api/_student-session.js';
 
 const headers = (platform, id, secret) => ({ 'x-client-platform': platform, 'x-device-id': id, 'x-device-secret': secret.repeat(64) });
 const phone = headers('mobile', 'phone_installation', 'a');
@@ -14,6 +14,40 @@ async function setup() {
   return db;
 }
 const profile = { id: 'student', name: 'Student', password: 'DO-NOT-EXPOSE', authUid: 'student' };
+test('legacy Firebase identity and proof only verify an existing matching mobile lease', async () => {
+  const db = await setup();
+  try {
+    await db.execute(`CREATE TABLE student_device_bindings (
+      student_uid TEXT PRIMARY KEY, device_hash TEXT NOT NULL, secret_hash TEXT NOT NULL, linked_at TEXT NOT NULL)`);
+    const { bindDevice } = await import('../api/_device-binding.js');
+    const legacy = { 'x-device-id': 'legacy_installation_123', 'x-device-secret': 'f'.repeat(64) };
+    const proof = deviceProof(legacy);
+    const verify = (uid = 'student', h = legacy, p = proof) => verifyLegacyMobileSession(db, uid, h, p);
+    await assert.rejects(verify(), { code: 'SESSION_REVOKED' });
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM student_active_sessions')).rows[0].n, 0);
+    await bindDevice(db, 'student', proof);
+    await claimSession(db, 'student', proof, 'mobile', profile);
+    const before = (await db.execute('SELECT * FROM student_active_sessions')).rows[0];
+    assert.equal((await verify()).profile.name, 'Student');
+    assert.deepEqual((await db.execute('SELECT * FROM student_active_sessions')).rows[0], before);
+    await assert.rejects(verify('other'), { code: 'SESSION_REVOKED' });
+    await assert.rejects(verify('student', legacy, deviceProof(phone)), { code: 'SESSION_REVOKED' });
+    await assert.rejects(verify('student', { ...legacy, 'x-client-platform': 'mobile' }), { code: 'SESSION_REQUIRED' });
+    await assert.rejects(verify('student', { ...legacy, 'x-student-session': 'invalid' }), { code: 'SESSION_REQUIRED' });
+    await assert.rejects(claimSession(db, 'student', deviceProof(pc), 'windows', profile), { code: 'SESSION_ACTIVE' });
+    await db.execute("UPDATE student_active_sessions SET created_at = '2000-01-01'");
+    await assert.rejects(verify(), { code: 'SESSION_EXPIRED' });
+    const expired = await verifyLegacyMobileSession(db, 'student', legacy, proof, { allowExpired: true });
+    await releaseSession(db, expired);
+    await claimSession(db, 'student', deviceProof(pc), 'windows', profile);
+    await assert.rejects(verify(), { code: 'SESSION_REVOKED' });
+    await resetSessions(db, 'student');
+    await assert.rejects(verify(), { code: 'SESSION_REVOKED' });
+    await claimSession(db, 'student', proof, 'mobile', profile);
+    await db.execute('DELETE FROM student_device_bindings');
+    await assert.rejects(verify(), { code: 'SESSION_REVOKED' });
+  } finally { db.close(); }
+});
 test('profile snapshot excludes credentials', () => assert.equal(publicProfile(profile).password, undefined));
 const legacyPhone = {
   'x-device-id': 'android_12345678-1234-1234-1234-123456789abc',

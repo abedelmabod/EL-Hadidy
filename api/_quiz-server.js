@@ -5,7 +5,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { activeCodeGrantsAccess } from './_quiz-domain.js';
 import { deviceProof } from './_device-binding.js';
-import { sessionSchema, verifySession } from './_student-session.js';
+import { sessionSchema, verifySession, verifyLegacyMobileSession } from './_student-session.js';
 
 let database;
 let schemaPromise;
@@ -168,6 +168,18 @@ export async function requireStudent(identity) {
   if (identity.sessionProfile) {
     if (identity.sessionProfile.isBanned) throw new HttpError(403, 'الحساب محظور.');
     return identity.sessionProfile;
+  }
+  if (identity.deviceHeaders && identity.deviceHeaders['x-client-platform'] === undefined
+    && identity.deviceHeaders['x-student-session'] === undefined) {
+    try {
+      const session = await verifyLegacyMobileSession(await getDatabase(), identity.uid,
+        identity.deviceHeaders, deviceProof(identity.deviceHeaders));
+      if (session.profile.isBanned) throw new HttpError(403, 'الحساب محظور.');
+      return session.profile;
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(error.status || 503, 'تعذر التحقق من جلسة الجهاز. سجّل الدخول مرة أخرى.');
+    }
   }
   const profile = await findProfile(identity.store, 'students', identity.uid);
   if (!profile || profile.isBanned) throw new HttpError(403, 'الحساب غير مؤهل.');

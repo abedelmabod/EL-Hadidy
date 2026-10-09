@@ -69,6 +69,27 @@ export async function verifySession(db, headers, proof, { allowExpired = false }
   return { uid: row.student_uid, profile: JSON.parse(row.profile_json), tokenHash: row.token_hash };
 }
 
+export async function verifyLegacyMobileSession(db, uid, headers, proof, { allowExpired = false } = {}) {
+  // Legacy clients send a verified Firebase identity and device proof, but no lease token.
+  // Never claim or renew here: an existing mobile lease and binding must both match.
+  if (headers['x-client-platform'] !== undefined || headers['x-student-session'] !== undefined) {
+    throw new DeviceBindingError('SESSION_REQUIRED', 401);
+  }
+  const row = (await db.execute({ sql: `SELECT s.* FROM student_active_sessions s
+    JOIN student_device_bindings b ON b.student_uid = s.student_uid
+      AND b.device_hash = s.device_hash AND b.secret_hash = s.secret_hash
+    WHERE s.student_uid = ? AND s.platform = 'mobile'
+      AND NOT EXISTS (SELECT 1 FROM student_revoked_devices r WHERE r.student_uid = s.student_uid
+        AND r.device_hash = s.device_hash AND r.secret_hash = s.secret_hash)`, args: [uid] })).rows[0];
+  if (!row || !matches(row.device_hash, proof.idHash) || !matches(row.secret_hash, proof.secretHash)) {
+    throw new DeviceBindingError('SESSION_REVOKED', 401);
+  }
+  if (!allowExpired && Date.now() - Date.parse(row.created_at) > 7 * 24 * 60 * 60 * 1000) {
+    throw new DeviceBindingError('SESSION_EXPIRED', 401);
+  }
+  return { uid: row.student_uid, profile: JSON.parse(row.profile_json), tokenHash: row.token_hash };
+}
+
 export async function releaseSession(db, session) {
   await db.execute({ sql: 'DELETE FROM student_active_sessions WHERE student_uid = ? AND token_hash = ?', args: [session.uid, session.tokenHash] });
 }
